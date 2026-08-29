@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastmcp import FastMCP
@@ -14,7 +15,7 @@ from starlette.responses import JSONResponse
 
 from fraud_mcp.config import Settings, get_settings
 from fraud_mcp.errors import AnalyticsError, ErrorType
-from fraud_mcp.services.database import readonly_connection
+from fraud_mcp.services.database import InMemoryDatabase, readonly_connection
 from fraud_mcp.services.query_service import run_query as execute_query
 from fraud_mcp.services.sample_service import get_sample_values as sample_values
 from fraud_mcp.services.schema_service import get_schema as inspect_schema
@@ -89,6 +90,17 @@ def _invoke_tool(
 
 def create_server(settings: Settings | None = None) -> FastMCP:
     settings = settings or get_settings()
+    database = InMemoryDatabase(settings.database_path)
+
+    @asynccontextmanager
+    async def lifespan(_: FastMCP):
+        database.load()
+        LOGGER.info("Loaded SQLite database into memory from %s", database.source_path)
+        try:
+            yield {}
+        finally:
+            database.close()
+
     server = FastMCP(
         "Fraud Analytics",
         instructions=(
@@ -98,6 +110,7 @@ def create_server(settings: Settings | None = None) -> FastMCP:
         version="0.1.0",
         mask_error_details=True,
         strict_input_validation=True,
+        lifespan=lifespan,
     )
 
     @server.tool(name="get_schema")
@@ -106,7 +119,7 @@ def create_server(settings: Settings | None = None) -> FastMCP:
 
         return _invoke_tool(
             "get_schema",
-            lambda: inspect_schema(settings.database_path).model_dump(mode="json"),
+            lambda: inspect_schema(database).model_dump(mode="json"),
         )
 
     @server.tool(name="get_sample_values")
@@ -120,7 +133,7 @@ def create_server(settings: Settings | None = None) -> FastMCP:
         return _invoke_tool(
             "get_sample_values",
             lambda: sample_values(
-                settings.database_path,
+                database,
                 relation,
                 column,
                 limit,
@@ -134,7 +147,7 @@ def create_server(settings: Settings | None = None) -> FastMCP:
         return _invoke_tool(
             "run_query",
             lambda: execute_query(
-                settings.database_path,
+                database,
                 sql,
                 max_rows=settings.max_query_rows,
                 hard_max_rows=settings.hard_max_query_rows,
@@ -148,7 +161,7 @@ def create_server(settings: Settings | None = None) -> FastMCP:
 
         def operation() -> dict[str, Any]:
             with readonly_connection(
-                settings.database_path,
+                database,
                 timeout_seconds=settings.query_timeout_seconds,
             ) as connection:
                 row = connection.execute(
@@ -185,7 +198,7 @@ def create_server(settings: Settings | None = None) -> FastMCP:
     @server.custom_route("/health", methods=["GET"], include_in_schema=False)
     async def health(_: Request) -> JSONResponse:
         try:
-            with readonly_connection(settings.database_path) as connection:
+            with readonly_connection(database) as connection:
                 connection.execute("SELECT 1").fetchone()
             return JSONResponse({"status": "ok"})
         except Exception:

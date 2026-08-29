@@ -4,6 +4,10 @@ A read-only Model Context Protocol server for analytical access to the local
 SQLite fraud dataset. It exposes a flattened `fraud_transactions` view designed
 for Text2SQL and serves MCP over Streamable HTTP for remote clients.
 
+At startup, the server copies the prepared SQLite database into a shared
+in-memory database. Tool calls use connections to that snapshot, avoiding
+filesystem I/O; changes to the source file take effect after a server restart.
+
 ## Requirements
 
 - Python 3.13+
@@ -118,8 +122,8 @@ Validates and runs one read-only analytical query:
 
 `SELECT`, `WITH`, joins, aggregates, analytical subqueries, and window functions
 are supported. DDL, DML, `PRAGMA`, `ATTACH`, multiple statements, and extension
-loading are rejected. SQLite is also opened with `mode=ro` and
-`PRAGMA query_only=ON` as defense in depth.
+loading are rejected. The source file is opened with `mode=ro`, and runtime
+in-memory connections use `PRAGMA query_only=ON` as defense in depth.
 
 ### `get_database_info`
 
@@ -160,8 +164,8 @@ docker build -t fraud-analytics-mcp .
 docker run --rm -p 8000:8000 fraud-analytics-mcp
 ```
 
-The image prepares the bundled database during the build and the runtime opens
-it read-only.
+The image prepares the bundled database during the build and the runtime loads
+it into a read-only in-memory snapshot.
 
 ## Network security
 

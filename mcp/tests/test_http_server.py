@@ -37,31 +37,37 @@ async def test_streamable_http_lists_and_calls_tools(settings: Settings) -> None
         "http://testserver/mcp",
         httpx_client_factory=client_factory,
     )
-    async with app.router.lifespan_context(app), Client(transport) as client:
-        tools = await client.list_tools()
-        assert {tool.name for tool in tools} >= {
-            "get_schema",
-            "get_sample_values",
-            "run_query",
-        }
+    async with app.router.lifespan_context(app):
+        settings.database_path.unlink()
+        async with Client(transport) as client:
+            tools = await client.list_tools()
+            assert {tool.name for tool in tools} >= {
+                "get_schema",
+                "get_sample_values",
+                "run_query",
+            }
 
-        result = await client.call_tool(
-            "run_query",
-            {"sql": "SELECT COUNT(*) AS count FROM fraud_transactions"},
-        )
-        assert result.structured_content["rows"] == [[3]]
+            result = await client.call_tool(
+                "run_query",
+                {"sql": "SELECT COUNT(*) AS count FROM fraud_transactions"},
+            )
+            assert result.structured_content["rows"] == [[3]]
 
 
 @pytest.mark.anyio
 async def test_health_route(settings: Settings) -> None:
-    app = create_server(settings).http_app(
+    server = create_server(settings)
+    app = server.http_app(
         path=settings.mcp_path,
         transport="streamable-http",
     )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
-    ) as client:
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client,
+    ):
         response = await client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}

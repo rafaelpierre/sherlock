@@ -8,12 +8,11 @@ import difflib
 import math
 import re
 import sqlite3
-from pathlib import Path
 from typing import Any
 
 from fraud_mcp.errors import AnalyticsError, ErrorType
 from fraud_mcp.models import QueryResponse
-from fraud_mcp.services.database import readonly_connection
+from fraud_mcp.services.database import Database, readonly_connection
 from fraud_mcp.services.query_validator import validate_sql
 from fraud_mcp.services.schema_service import column_names, relation_names
 
@@ -80,7 +79,7 @@ def _execution_error(
 
 
 def run_query(
-    database_path: Path,
+    database: Database,
     sql: str,
     *,
     max_rows: int,
@@ -91,7 +90,7 @@ def run_query(
     row_limit = min(max_rows, hard_max_rows)
 
     with readonly_connection(
-        database_path,
+        database,
         timeout_seconds=timeout_seconds,
     ) as connection:
         try:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
 from fraud_mcp.models import (
     ColumnInfo,
@@ -11,7 +10,7 @@ from fraud_mcp.models import (
     RelationInfo,
     SchemaResponse,
 )
-from fraud_mcp.services.database import readonly_connection
+from fraud_mcp.services.database import Database, readonly_connection
 
 CANONICAL_RELATION = "fraud_transactions"
 
@@ -37,8 +36,8 @@ def column_names(connection: sqlite3.Connection, relation: str) -> list[str]:
     return [str(row["name"]) for row in connection.execute(pragma)]
 
 
-def get_schema(database_path: Path) -> SchemaResponse:
-    with readonly_connection(database_path) as connection:
+def get_schema(database: Database) -> SchemaResponse:
+    with readonly_connection(database) as connection:
         names = relation_names(connection)
         relations: list[RelationInfo] = []
         for name, relation_type in names.items():

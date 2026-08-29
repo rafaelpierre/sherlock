@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from fraud_mcp.errors import AnalyticsError, ErrorType
 from fraud_mcp.models import SampleValuesResponse
-from fraud_mcp.services.database import readonly_connection
+from fraud_mcp.services.database import Database, readonly_connection
 from fraud_mcp.services.schema_service import (
     column_names,
     quote_identifier,
@@ -18,7 +17,7 @@ MAX_SAMPLE_VALUES = 50
 
 
 def get_sample_values(
-    database_path: Path,
+    database: Database,
     relation: str,
     column: str,
     limit: int = 20,
@@ -34,7 +33,7 @@ def get_sample_values(
             f"Limit must be between 1 and {MAX_SAMPLE_VALUES}.",
         )
 
-    with readonly_connection(database_path) as connection:
+    with readonly_connection(database) as connection:
         relations = relation_names(connection)
         if relation not in relations:
             raise AnalyticsError(
