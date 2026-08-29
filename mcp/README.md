@@ -67,6 +67,15 @@ Example remote client configuration:
 
 The endpoint uses Streamable HTTP, not stdio or the legacy HTTP+SSE transport.
 
+For a local MCP client that owns the server subprocess, use the dedicated stdio
+entry point instead:
+
+```bash
+uv run fraud-mcp-stdio
+```
+
+Protocol messages are written to stdout and server logs remain on stderr.
+
 ## Configuration
 
 | Variable | Default | Purpose |

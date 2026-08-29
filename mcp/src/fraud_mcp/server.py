@@ -231,5 +231,17 @@ def main() -> None:
         LOGGER.info("Fraud Analytics MCP stopped")
 
 
+def stdio_main() -> None:
+    """Run the same MCP server over stdio for local subprocess clients."""
+
+    settings = get_settings()
+    _configure_logging(settings)
+    LOGGER.info("Starting Fraud Analytics MCP over stdio")
+    try:
+        mcp.run(transport="stdio", show_banner=False)
+    except KeyboardInterrupt:
+        LOGGER.info("Fraud Analytics MCP stopped")
+
+
 if __name__ == "__main__":
     main()
