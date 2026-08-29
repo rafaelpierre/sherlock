@@ -1,5 +1,5 @@
 [project]
-name = "mcp"
+name = "fraud-analytics-mcp"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -8,17 +8,20 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "fastmcp>=2.3.0rc1",
+    "fastmcp>=3.4.7",
     "pydantic>=2.13.5",
     "sqlglot>=30.17.0",
 ]
 
 [project.scripts]
-mcp = "mcp:main"
+fraud-mcp = "fraud_mcp.server:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "fraud_mcp"
 
 [dependency-groups]
 dev = [
@@ -26,3 +29,6 @@ dev = [
     "ruff>=0.16.5",
     "ty>=0.0.75",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
