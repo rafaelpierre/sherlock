@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.config import Settings
+from sherlock.config import Settings
 
 
 def test_stdio_is_the_default_transport(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,11 +1,12 @@
-"""Strands agent wired to the fraud analytics MCP server."""
+"""Strands agents wired to the fraud analytics MCP server."""
 
 from __future__ import annotations
 
+from pydantic import BaseModel, Field
 from strands import Agent
 from strands.tools.mcp import MCPClient
 
-from backend.config import Settings
+from sherlock.config import Settings
 
 SYSTEM_PROMPT = """
 You are a careful fraud analytics assistant. Answer questions using the database
@@ -23,6 +24,39 @@ For every question that requires database facts:
 Never attempt INSERT, UPDATE, DELETE, DDL, PRAGMA, ATTACH, or multiple statements.
 If a tool reports a validation error, correct the query using the schema and retry.
 """.strip()
+
+SQL_GENERATION_PROMPT = """
+You are a careful SQLite query planner for a fraud analytics application.
+Translate the user's natural-language question into exactly one read-only SQLite
+SELECT or WITH query.
+
+Before writing SQL, inspect get_schema. Use get_sample_values only when actual
+values are needed to resolve ambiguity, and use get_database_info only when its
+compact coverage metadata is relevant. Prefer the canonical fraud_transactions
+relation. Do not invent relations or columns.
+
+Return the SQL query as structured output. Do not execute it. Never produce
+INSERT, UPDATE, DELETE, DDL, PRAGMA, ATTACH, or multiple statements. is_fraud is
+1 for fraud, 0 for non-fraud, and NULL when unlabelled.
+""".strip()
+
+
+class SQLGeneration(BaseModel):
+    """Structured output produced by the SQL-generation agent."""
+
+    sql: str = Field(min_length=1)
+
+
+def create_sql_generation_agent(client: MCPClient) -> Agent:
+    """Create an isolated agent that can inspect metadata but cannot execute SQL."""
+
+    return Agent(
+        system_prompt=SQL_GENERATION_PROMPT,
+        tools=[client],
+        structured_output_model=SQLGeneration,
+        callback_handler=None,
+        name="sherlock-sql-generator",
+    )
 
 
 def create_agent(settings: Settings | None = None) -> Agent:
