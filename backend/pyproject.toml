@@ -10,10 +10,11 @@ requires-python = ">=3.13"
 dependencies = [
     "boto3>=1.43.83",
     "botocore[crt]>=1.43.83",
+    "strands-agents>=1.54.0",
 ]
 
 [project.scripts]
-backend = "backend:main"
+backend = "backend.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
