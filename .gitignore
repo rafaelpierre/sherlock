@@ -1,4 +1,7 @@
 __pycache__
+.venv
+dist
+specs
 
 .terraform
 .terraform.lock.hcl
