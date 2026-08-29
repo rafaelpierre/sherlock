@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from collections.abc import Sequence
 
-from backend.agent import create_agent
+from sherlock.config import Settings
+from sherlock.services.text2sql import create_text2sql_service
 
 DEFAULT_QUESTION = "How many transactions are fraudulent and non-fraudulent?"
 
@@ -25,11 +27,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     question = " ".join(args.question).strip() or DEFAULT_QUESTION
-    agent = create_agent()
+    service = create_text2sql_service(Settings.from_environment())
     try:
-        agent(question)
+        result = asyncio.run(service.query(question))
+        print(result)
     finally:
-        agent.cleanup()
+        service.close()
 
 
 if __name__ == "__main__":

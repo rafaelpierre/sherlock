@@ -1,9 +1,31 @@
 # Sherlock Text2SQL Agent
 
 A small [Strands Agents](https://strandsagents.com/) application that answers
-natural-language fraud analytics questions through the MCP server in `../MCP`.
+natural-language fraud analytics questions through the MCP server in `../mcp`.
 The backend never opens SQLite directly: Strands discovers the MCP tools and the
 MCP server validates and executes the generated read-only SQL.
+
+## Run the HTTP API
+
+Start the FastAPI application locally:
+
+```bash
+cd backend
+uv sync
+uv run backend-api
+```
+
+Submit a question to the single functional endpoint:
+
+```bash
+curl -X POST http://localhost:8080/v1/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"Which card type has the highest fraud rate?"}'
+```
+
+The response includes the normalized SQL, tabular result, generation attempt
+count, and whether the initial natural-language-to-SQL translation was served
+from the process-local cache.
 
 ## Run locally with stdio
 
@@ -25,7 +47,7 @@ The local command is equivalent to this MCP client configuration:
 {
   "transport": "stdio",
   "command": "uv",
-  "args": ["--directory", "../MCP", "run", "fraud-mcp-stdio"]
+  "args": ["--directory", "../mcp", "run", "fraud-mcp-stdio"]
 }
 ```
 
@@ -61,7 +83,7 @@ address.
 For example, a custom local checkout can use:
 
 ```bash
-SHERLOCK_MCP_STDIO_ARGS='["--directory","/work/MCP","run","fraud-mcp-stdio"]' \
+SHERLOCK_MCP_STDIO_ARGS='["--directory","/work/mcp","run","fraud-mcp-stdio"]' \
 uv run backend "How many transactions are unlabelled?"
 ```
 
@@ -71,11 +93,20 @@ and TLS at the MCP service or reverse-proxy layer.
 
 ## How Text2SQL works
 
-The system prompt directs the agent to inspect `get_schema`, optionally inspect
-bounded values with `get_sample_values`, generate one SQLite `SELECT`/`WITH`
-statement, and execute it with `run_query`. The MCP server remains the security
-boundary: it rejects writes, DDL, unsafe SQLite operations, multiple statements,
-unknown schema references, oversized results, and long-running queries.
+The API route only validates HTTP input and delegates to `Text2SQLService`. The
+service asks an isolated SQL-generation agent to inspect `get_schema`, optionally
+inspect bounded values with `get_sample_values`, and produce one structured
+SQLite `SELECT`/`WITH` statement. The agent cannot call `run_query`.
+
+The service then calls `run_query` deterministically through the same MCP
+connection. Repairable validation or execution errors are returned to a fresh
+SQL-generation agent for at most two corrections. Initial translations use a
+bounded, process-local LRU cache; cached SQL is still validated by MCP every time
+it executes.
+
+The MCP server remains the security boundary: it rejects writes, DDL, unsafe
+SQLite operations, multiple statements, oversized results, and long-running
+queries.
 
 ## Checks
 

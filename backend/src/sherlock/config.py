@@ -1,4 +1,4 @@
-"""Backend configuration for the fraud analytics MCP connection."""
+"""Sherlock configuration for the fraud analytics MCP connection."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 MCPTransport = Literal["stdio", "streamable-http"]
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MCP_DIRECTORY = REPOSITORY_ROOT / "MCP"
+DEFAULT_MCP_DIRECTORY = REPOSITORY_ROOT / "mcp"
 DEFAULT_STDIO_ARGS = (
     "--directory",
     str(DEFAULT_MCP_DIRECTORY),
@@ -77,22 +77,25 @@ class Settings:
             mcp_startup_timeout=int(os.getenv("SHERLOCK_MCP_STARTUP_TIMEOUT", "30")),
         )
 
-    def mcp_server_config(self) -> dict[str, Any]:
+    def mcp_server_config(
+        self,
+        *,
+        allowed_tools: tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
         """Return a Strands-compatible MCP server entry."""
 
+        allowed_tools = allowed_tools or (
+            "get_schema",
+            "get_sample_values",
+            "run_query",
+            "get_database_info",
+        )
         common: dict[str, Any] = {
             "transport": self.mcp_transport,
             "startup_timeout": self.mcp_startup_timeout,
             "application_name": "sherlock-text2sql-agent",
             "application_version": "0.1.0",
-            "tool_filters": {
-                "allowed": [
-                    "get_schema",
-                    "get_sample_values",
-                    "run_query",
-                    "get_database_info",
-                ]
-            },
+            "tool_filters": {"allowed": list(allowed_tools)},
         }
         if self.mcp_transport == "stdio":
             return {
