@@ -41,6 +41,9 @@ configuration, remote transport, Docker, and test instructions.
 ## Next steps
 
 1. Frontend
-2. Finish the Terraform implementation for the remaining AWS components
+2. Terraform
+  2.1. Finish implementation for the remaining AWS components
 3. Observability
 4. Evals
+  4.1. Basic cases
+  4.2. More complex scenarios (e.g. `what are some insights about fraudulent transactions?`)
