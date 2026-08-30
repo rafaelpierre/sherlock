@@ -136,7 +136,7 @@ function TableArtifact({ artifact }: { artifact: Extract<Artifact, { type: "tabl
           ))}
         </div>
       ) : (
-        <div className="table-scroll">
+        <div className={`table-scroll ${numericColumn > 0 ? "chart-sized-result" : ""}`}>
           <table>
             <thead>
               <tr>
