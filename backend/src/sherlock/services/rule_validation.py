@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 from uuid import uuid4
@@ -9,7 +10,6 @@ from uuid import uuid4
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ParseError
-from strands.tools.mcp import MCPClient
 
 from sherlock.services.text2sql import ExecutionResult, QueryExecutor
 
@@ -34,10 +34,21 @@ class SchemaProvider(Protocol):
     async def columns(self, relation: str) -> set[str]: ...
 
 
+class MCPToolCaller(Protocol):
+    """Call an MCP tool without coupling schema parsing to a concrete client."""
+
+    async def call_tool_async(
+        self,
+        tool_use_id: str,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> Mapping[str, Any]: ...
+
+
 class MCPSchemaProvider:
     """Read canonical columns from MCP instead of duplicating schema in the backend."""
 
-    def __init__(self, client: MCPClient) -> None:
+    def __init__(self, client: MCPToolCaller) -> None:
         self._client = client
 
     async def columns(self, relation: str) -> set[str]:
@@ -86,6 +97,12 @@ class RuleValidationResult:
         return asdict(self)
 
 
+class RuleValidator(Protocol):
+    """Validate candidate predicates for deterministic domain services."""
+
+    async def validate(self, rule: str) -> RuleValidationResult: ...
+
+
 class RuleValidationService:
     """Validate a SQL predicate before it can be used by domain services."""
 
@@ -104,9 +121,28 @@ class RuleValidationService:
                 "Comments and statement separators are not allowed in rules.",
             )
 
+        parsed = self._parse_predicate(stripped)
+        if isinstance(parsed, RuleValidationResult):
+            return parsed
+
+        columns = list(parsed.find_all(exp.Column))
+        column_error = await self._validate_columns(columns)
+        if column_error is not None:
+            return column_error
+
+        normalized_rule = parsed.sql(dialect="sqlite", pretty=False)
+        execution = await self._executor.execute(
+            f"SELECT 1 FROM {CANONICAL_RELATION} WHERE {normalized_rule} LIMIT 1"
+        )
+        if execution.error is not None:
+            return self._execution_failure(execution)
+
+        return RuleValidationResult(valid=True, rule=normalized_rule, errors=[])
+
+    def _parse_predicate(self, rule: str) -> exp.Expression | RuleValidationResult:
         try:
             statement = sqlglot.parse_one(
-                f"SELECT 1 FROM {CANONICAL_RELATION} WHERE {stripped} LIMIT 1",
+                f"SELECT 1 FROM {CANONICAL_RELATION} WHERE {rule} LIMIT 1",
                 read="sqlite",
             )
         except ParseError as exc:
@@ -129,7 +165,11 @@ class RuleValidationService:
                 "Queries and data-changing expressions are not allowed in rules.",
             )
 
-        columns = list(predicate.find_all(exp.Column))
+        return predicate
+
+    async def _validate_columns(
+        self, columns: list[exp.Column]
+    ) -> RuleValidationResult | None:
         for column in columns:
             if column.table and column.table != CANONICAL_RELATION:
                 return self._invalid(
@@ -155,14 +195,7 @@ class RuleValidationService:
                     "Inspect the canonical schema and use an available column.",
                 )
 
-        normalized_rule = predicate.sql(dialect="sqlite", pretty=False)
-        execution = await self._executor.execute(
-            f"SELECT 1 FROM {CANONICAL_RELATION} WHERE {normalized_rule} LIMIT 1"
-        )
-        if execution.error is not None:
-            return self._execution_failure(execution)
-
-        return RuleValidationResult(valid=True, rule=normalized_rule, errors=[])
+        return None
 
     @staticmethod
     def _invalid(

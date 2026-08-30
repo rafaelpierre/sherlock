@@ -51,7 +51,7 @@ class StubValidator:
 def test_valid_rule_is_returned_without_repair() -> None:
     service = RuleGenerationService(
         StubGenerator(["amount_usd > 1000"]),
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
     )
 
     result = asyncio.run(service.generate("transactions above $1,000"))
@@ -68,7 +68,7 @@ def test_invalid_rule_is_repaired_within_bound() -> None:
     generator = StubGenerator(["missing > 1", "amount_usd > 1"])
     service = RuleGenerationService(
         generator,
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
     )
 
     result = asyncio.run(service.generate("high amount"))
@@ -83,7 +83,7 @@ def test_repair_stops_at_configured_limit() -> None:
     service = RuleGenerationService(
         generator,
         StubValidator(),
-        max_repair_attempts=2,  # type: ignore[arg-type]
+        max_repair_attempts=2,
     )
 
     result = asyncio.run(service.generate("high amount"))
@@ -98,7 +98,7 @@ def test_negative_repair_limit_is_rejected() -> None:
     with pytest.raises(ValueError, match="cannot be negative"):
         RuleGenerationService(
             StubGenerator([]),
-            StubValidator(),  # type: ignore[arg-type]
+            StubValidator(),
             max_repair_attempts=-1,
         )
 
@@ -117,7 +117,7 @@ def test_lifecycle_callbacks_run_once() -> None:
 
     service = RuleGenerationService(
         StubGenerator(["amount_usd > 1", "amount_usd > 2"]),
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
         start_callback=start,
         close_callback=close,
     )
@@ -134,7 +134,7 @@ def test_refinement_preserves_previous_rule() -> None:
     generator = StubGenerator(["amount_usd > 1500 AND card_type = 'Debit'"])
     service = RuleGenerationService(
         generator,
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
     )
 
     result = asyncio.run(
@@ -153,7 +153,7 @@ def test_refinement_repairs_invalid_candidate() -> None:
     generator = StubGenerator(["missing > 1", "amount_usd > 1500"])
     service = RuleGenerationService(
         generator,
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
     )
 
     result = asyncio.run(service.refine("amount_usd > 1000", "raise it"))
@@ -165,7 +165,7 @@ def test_refinement_repairs_invalid_candidate() -> None:
 def test_refinement_rejects_invalid_current_rule() -> None:
     service = RuleGenerationService(
         StubGenerator([]),
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
     )
 
     with pytest.raises(InvalidCurrentRule) as caught:

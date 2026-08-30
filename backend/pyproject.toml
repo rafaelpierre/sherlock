@@ -30,9 +30,11 @@ module-name = "sherlock"
 
 [dependency-groups]
 dev = [
+    "complexipy>=7.0.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.5",
+    "ty>=0.0.75",
 ]
 
 [tool.pytest.ini_options]

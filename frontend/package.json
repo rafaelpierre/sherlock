@@ -1,0 +1,17 @@
+{
+  "name": "sherlock-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint . --deny-warnings --no-error-on-unmatched-pattern"
+  },
+  "devDependencies": {
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0"
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}

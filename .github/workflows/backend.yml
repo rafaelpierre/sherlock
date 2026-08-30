@@ -21,10 +21,12 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - run: uv sync --locked --dev
       - run: uv run ruff check .
+      - run: uv run ty check
+      - run: uv run complexipy . --max-complexity-allowed 15 --failed --color no
       - run: uv run pytest --cov=sherlock --cov-report=term-missing --cov-fail-under=80

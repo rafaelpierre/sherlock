@@ -12,6 +12,7 @@ from sherlock.services.rule_validation import (
     MCPSchemaProvider,
     RuleValidationResult,
     RuleValidationService,
+    RuleValidator,
 )
 from sherlock.services.text2sql import MCPQueryExecutor, QueryExecutor
 
@@ -63,7 +64,7 @@ class BacktestService:
 
     def __init__(
         self,
-        validator: RuleValidationService,
+        validator: RuleValidator,
         executor: QueryExecutor,
         *,
         start_callback: Any = None,
