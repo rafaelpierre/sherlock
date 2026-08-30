@@ -4,7 +4,11 @@ import asyncio
 
 import pytest
 
-from sherlock.services.rule_validation import RuleValidationService
+from sherlock.services.rule_validation import (
+    MCPSchemaProvider,
+    RuleSchemaError,
+    RuleValidationService,
+)
 from sherlock.services.text2sql import ExecutionResult, QueryData
 
 
@@ -27,6 +31,15 @@ class StubExecutor:
             sql=sql,
             data=QueryData(columns=["1"], rows=[[1]], row_count=1, truncated=False),
         )
+
+
+class StubMCPClient:
+    def __init__(self, result: dict[str, object]) -> None:
+        self.result = result
+
+    async def call_tool_async(self, **kwargs):
+        assert kwargs["name"] == "get_schema"
+        return self.result
 
 
 def validate(rule: str, executor: StubExecutor | None = None):
@@ -116,3 +129,41 @@ def test_execution_error_is_returned_structurally() -> None:
             "suggestion": "Use a numeric value",
         }
     ]
+
+
+def test_mcp_schema_provider_returns_relation_columns() -> None:
+    provider = MCPSchemaProvider(
+        StubMCPClient(  # type: ignore[arg-type]
+            {
+                "structuredContent": {
+                    "relations": [
+                        {
+                            "name": "fraud_transactions",
+                            "columns": [{"name": "amount_usd"}, {"name": "card_type"}],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    columns = asyncio.run(provider.columns("fraud_transactions"))
+
+    assert columns == {"amount_usd", "card_type"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"status": "error"},
+        {"structuredContent": {"relations": "invalid"}},
+        {"structuredContent": {"relations": []}},
+    ],
+)
+def test_mcp_schema_provider_rejects_unavailable_or_invalid_data(
+    payload: dict[str, object],
+) -> None:
+    provider = MCPSchemaProvider(StubMCPClient(payload))  # type: ignore[arg-type]
+
+    with pytest.raises(RuleSchemaError):
+        asyncio.run(provider.columns("fraud_transactions"))

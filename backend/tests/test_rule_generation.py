@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Iterator
+
+import pytest
+
+from sherlock.services.rule_generation import RuleGenerationService
+from sherlock.services.rule_validation import (
+    RuleValidationError,
+    RuleValidationResult,
+)
+
+
+class StubGenerator:
+    def __init__(self, rules: list[str]) -> None:
+        self.rules: Iterator[str] = iter(rules)
+        self.repairs: list[tuple[str, str]] = []
+
+    async def generate(self, instruction: str) -> str:
+        return next(self.rules)
+
+    async def repair(
+        self,
+        instruction: str,
+        previous_rule: str,
+        validation: RuleValidationResult,
+    ) -> str:
+        self.repairs.append((instruction, previous_rule))
+        return next(self.rules)
+
+
+class StubValidator:
+    async def validate(self, rule: str) -> RuleValidationResult:
+        if "missing" in rule:
+            return RuleValidationResult(
+                valid=False,
+                rule=None,
+                errors=[
+                    RuleValidationError(
+                        "UNKNOWN_COLUMN", "Column 'missing' does not exist."
+                    )
+                ],
+            )
+        return RuleValidationResult(valid=True, rule=rule.upper(), errors=[])
+
+
+def test_valid_rule_is_returned_without_repair() -> None:
+    service = RuleGenerationService(
+        StubGenerator(["amount_usd > 1000"]), StubValidator()  # type: ignore[arg-type]
+    )
+
+    result = asyncio.run(service.generate("transactions above $1,000"))
+
+    assert result == {
+        "rule": "AMOUNT_USD > 1000",
+        "valid": True,
+        "repair_count": 0,
+        "errors": [],
+    }
+
+
+def test_invalid_rule_is_repaired_within_bound() -> None:
+    generator = StubGenerator(["missing > 1", "amount_usd > 1"])
+    service = RuleGenerationService(
+        generator, StubValidator()  # type: ignore[arg-type]
+    )
+
+    result = asyncio.run(service.generate("high amount"))
+
+    assert result["valid"] is True
+    assert result["repair_count"] == 1
+    assert generator.repairs == [("high amount", "missing > 1")]
+
+
+def test_repair_stops_at_configured_limit() -> None:
+    generator = StubGenerator(["missing > 1", "missing > 2", "missing > 3"])
+    service = RuleGenerationService(
+        generator, StubValidator(), max_repair_attempts=2  # type: ignore[arg-type]
+    )
+
+    result = asyncio.run(service.generate("high amount"))
+
+    assert result["valid"] is False
+    assert result["rule"] is None
+    assert result["repair_count"] == 2
+    assert result["errors"][0]["code"] == "UNKNOWN_COLUMN"
+
+
+def test_negative_repair_limit_is_rejected() -> None:
+    with pytest.raises(ValueError, match="cannot be negative"):
+        RuleGenerationService(
+            StubGenerator([]),
+            StubValidator(),  # type: ignore[arg-type]
+            max_repair_attempts=-1,
+        )
+
+
+def test_lifecycle_callbacks_run_once() -> None:
+    starts = 0
+    closes = 0
+
+    async def start() -> None:
+        nonlocal starts
+        starts += 1
+
+    def close() -> None:
+        nonlocal closes
+        closes += 1
+
+    service = RuleGenerationService(
+        StubGenerator(["amount_usd > 1", "amount_usd > 2"]),
+        StubValidator(),  # type: ignore[arg-type]
+        start_callback=start,
+        close_callback=close,
+    )
+
+    asyncio.run(service.generate("one"))
+    asyncio.run(service.generate("two"))
+    service.close()
+
+    assert starts == 1
+    assert closes == 1

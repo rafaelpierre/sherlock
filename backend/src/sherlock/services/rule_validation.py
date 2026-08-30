@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
+from uuid import uuid4
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ParseError
+from strands.tools.mcp import MCPClient
 
 from sherlock.services.text2sql import ExecutionResult, QueryExecutor
 
@@ -21,10 +23,45 @@ DISALLOWED_PREDICATE_NODES = (
 )
 
 
+class RuleSchemaError(RuntimeError):
+    """Canonical schema metadata could not be loaded."""
+
+
 class SchemaProvider(Protocol):
     """Provide columns for the canonical analytical relation."""
 
     async def columns(self, relation: str) -> set[str]: ...
+
+
+class MCPSchemaProvider:
+    """Read canonical columns from MCP instead of duplicating schema in the backend."""
+
+    def __init__(self, client: MCPClient) -> None:
+        self._client = client
+
+    async def columns(self, relation: str) -> set[str]:
+        result = await self._client.call_tool_async(
+            tool_use_id=uuid4().hex,
+            name="get_schema",
+            arguments={},
+        )
+        payload = result.get("structuredContent")
+        if result.get("status") == "error" or not isinstance(payload, dict):
+            raise RuleSchemaError("The schema service is unavailable.")
+        relations = payload.get("relations")
+        if not isinstance(relations, list):
+            raise RuleSchemaError("The schema service returned invalid data.")
+        for item in relations:
+            if isinstance(item, dict) and item.get("name") == relation:
+                columns = item.get("columns")
+                if not isinstance(columns, list):
+                    break
+                return {
+                    str(column["name"])
+                    for column in columns
+                    if isinstance(column, dict) and "name" in column
+                }
+        raise RuleSchemaError(f"Relation '{relation}' is not available.")
 
 
 @dataclass(frozen=True)

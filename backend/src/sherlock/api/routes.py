@@ -6,7 +6,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from sherlock.api.schemas import QueryRequest, QueryResponse
+from sherlock.api.schemas import (
+    QueryRequest,
+    QueryResponse,
+    RuleGenerateRequest,
+    RuleGenerateResponse,
+)
+from sherlock.services.rule_generation import RuleGenerationError, RuleGenerationService
 from sherlock.services.text2sql import Text2SQLError, Text2SQLService
 
 router = APIRouter(prefix="/v1")
@@ -19,6 +25,17 @@ def get_text2sql_service(request: Request) -> Text2SQLService:
 
 
 Text2SQLDependency = Annotated[Text2SQLService, Depends(get_text2sql_service)]
+
+
+def get_rule_generation_service(request: Request) -> RuleGenerationService:
+    """Return the application-scoped candidate-rule service."""
+
+    return request.app.state.rule_generation_service
+
+
+RuleGenerationDependency = Annotated[
+    RuleGenerationService, Depends(get_rule_generation_service)
+]
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -36,3 +53,20 @@ async def query(
             detail=str(exc),
         ) from exc
     return QueryResponse.model_validate(result)
+
+
+@router.post("/rules/generate", response_model=RuleGenerateResponse)
+async def generate_rule(
+    request: RuleGenerateRequest,
+    service: RuleGenerationDependency,
+) -> RuleGenerateResponse:
+    """Generate and deterministically validate a candidate fraud rule."""
+
+    try:
+        result = await service.generate(request.instruction)
+    except (RuleGenerationError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return RuleGenerateResponse.model_validate(result)
