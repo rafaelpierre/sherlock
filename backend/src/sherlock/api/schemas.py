@@ -208,7 +208,7 @@ class ConversationMessage(BaseModel):
 class WorkingState(BaseModel):
     """Authoritative structured referents supplied with every chat request."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     candidate_rule: str | None = Field(default=None, max_length=20_000)
     previous_rule: str | None = Field(default=None, max_length=20_000)

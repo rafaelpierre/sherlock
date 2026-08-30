@@ -167,6 +167,13 @@ def test_working_state_rejects_blank_structured_referents(
         WorkingState.model_validate({field: value})
 
 
+def test_working_state_validates_chat_tool_assignments() -> None:
+    state = WorkingState(candidate_rule="amount_usd > 1000")
+
+    with pytest.raises(ValidationError):
+        state.candidate_rule = " "
+
+
 def test_conversation_message_normalizes_content_and_rejects_unknown_role() -> None:
     message = ConversationMessage(role="user", content="  Compare them.  ")
 

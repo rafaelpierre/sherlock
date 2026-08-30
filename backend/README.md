@@ -15,7 +15,7 @@ uv sync
 uv run backend-api
 ```
 
-Submit a question to the single functional endpoint:
+Submit a standalone analytics question directly to the Text2SQL service:
 
 ```bash
 curl -X POST http://localhost:8080/v1/query \
@@ -26,6 +26,29 @@ curl -X POST http://localhost:8080/v1/query \
 The response includes the normalized SQL, tabular result, generation attempt
 count, and whether the initial natural-language-to-SQL translation was served
 from the process-local cache.
+
+## Use the conversational API
+
+`POST /v1/chat` creates a fresh ChatAgent for each request. The browser supplies
+bounded recent history and explicit working state; the backend does not retain
+hidden conversation state between requests.
+
+```bash
+curl -X POST http://localhost:8080/v1/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "conversation_id":"3b621bd5-98dd-4be0-b713-89b1ac751fab",
+    "message":"Which card type has the highest fraud rate?",
+    "history":[],
+    "working_state":{}
+  }'
+```
+
+Each response contains assistant text, typed artifacts, authoritative replacement
+working state, and intent/repair/cache metadata. Supported workflows are data
+exploration, candidate-rule generation and refinement, historical backtesting,
+and current-versus-previous rule comparison. State-dependent requests such as
+`Backtest it` return a structured `422` response when the required rule is absent.
 
 ## Run locally with stdio
 

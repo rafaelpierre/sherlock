@@ -1,0 +1,406 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pytest
+from strands.types.content import Message
+
+from sherlock.api.artifacts import SQLArtifact
+from sherlock.api.schemas import ConversationMessage, WorkingState
+from sherlock.chat import (
+    ChatAgent,
+    ChatAgentError,
+    ChatAgentFactory,
+    InvalidChatState,
+    MissingChatState,
+)
+from sherlock.services.backtest import InvalidBacktestRule
+from sherlock.services.rule_validation import (
+    RuleValidationError,
+    RuleValidationResult,
+)
+
+METRICS = {
+    "population": 100,
+    "labelled_population": 80,
+    "fraud_total": 10,
+    "transactions_flagged": 8,
+    "unlabelled_flagged": 1,
+    "fraud_caught": 5,
+    "false_positives": 2,
+    "false_negatives": 5,
+    "true_negatives": 68,
+    "precision": 5 / 7,
+    "recall": 0.5,
+    "false_positive_rate": 2 / 70,
+    "fraud_value_total_usd": 1_000.0,
+    "fraud_value_captured_usd": 600.0,
+    "fraud_value_recall": 0.6,
+    "alerts_per_day": 2.0,
+}
+
+
+class StubWorkflows:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self.generated: list[str] = []
+        self.refined: list[tuple[str, str]] = []
+        self.backtested: list[str] = []
+        self.compared: list[tuple[str, str]] = []
+
+    async def query(self, question: str) -> dict[str, Any]:
+        self.queries.append(question)
+        return {
+            "question": question,
+            "sql": "SELECT card_type, COUNT(*) FROM fraud_transactions",
+            "result": {
+                "columns": ["card_type", "count"],
+                "rows": [["Debit", 10]],
+                "row_count": 1,
+                "truncated": False,
+            },
+            "attempts": 2,
+            "cached_sql": True,
+        }
+
+    async def generate(self, instruction: str) -> dict[str, Any]:
+        self.generated.append(instruction)
+        return {
+            "rule": "amount_usd > 1000",
+            "valid": True,
+            "repair_count": 1,
+            "errors": [],
+        }
+
+    async def refine(self, rule: str, instruction: str) -> dict[str, Any]:
+        self.refined.append((rule, instruction))
+        return {
+            "rule": "amount_usd > 1500",
+            "previous_rule": rule,
+            "valid": True,
+            "repair_count": 0,
+            "errors": [],
+        }
+
+    async def backtest(self, rule: str) -> dict[str, Any]:
+        self.backtested.append(rule)
+        return {"rule": rule, "metrics": METRICS}
+
+    async def compare(self, current_rule: str, previous_rule: str) -> dict[str, Any]:
+        self.compared.append((current_rule, previous_rule))
+        return {
+            "current": {"rule": current_rule, "metrics": METRICS},
+            "previous": {"rule": previous_rule, "metrics": METRICS},
+            "delta": {
+                "precision": 0.0,
+                "recall": 0.0,
+                "transactions_flagged": 0,
+                "fraud_caught": 0,
+                "fraud_value_captured_usd": 0.0,
+            },
+        }
+
+
+class InvalidBacktestWorkflows(StubWorkflows):
+    async def backtest(self, rule: str) -> dict[str, Any]:
+        raise InvalidBacktestRule(
+            RuleValidationResult(
+                valid=False,
+                rule=None,
+                errors=[
+                    RuleValidationError(
+                        code="OUTCOME_COLUMN_FORBIDDEN",
+                        message="Outcome column is not allowed.",
+                    )
+                ],
+            )
+        )
+
+
+class TextResult:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __str__(self) -> str:
+        return self.text
+
+
+class ScriptedModel:
+    def __init__(
+        self,
+        tools: list[Any],
+        actions: list[tuple[str, dict[str, Any]]],
+        response_text: str,
+    ) -> None:
+        self.tools = {item.tool_name: item for item in tools}
+        self.actions = actions
+        self.response_text = response_text
+        self.cleaned = False
+
+    async def invoke_async(self, prompt: str) -> TextResult:
+        assert "Authoritative working state:" in prompt
+        for name, arguments in self.actions:
+            await self.tools[name](**arguments)
+        return TextResult(self.response_text)
+
+    def cleanup(self) -> None:
+        self.cleaned = True
+
+
+class ScriptedModelFactory:
+    def __init__(
+        self,
+        *scripts: list[tuple[str, dict[str, Any]]],
+        response_text: str = "Completed the requested workflow.",
+    ) -> None:
+        self.scripts = list(scripts)
+        self.response_text = response_text
+        self.histories: list[list[Message]] = []
+        self.models: list[ScriptedModel] = []
+
+    def __call__(self, tools: list[Any], history: list[Message]) -> ScriptedModel:
+        self.histories.append(history)
+        model = ScriptedModel(tools, self.scripts.pop(0), self.response_text)
+        self.models.append(model)
+        return model
+
+
+def create_agent(
+    workflows: StubWorkflows,
+    model_factory: ScriptedModelFactory,
+    state: WorkingState | None = None,
+    history: list[ConversationMessage] | None = None,
+) -> ChatAgent:
+    return ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        history or [],
+        state or WorkingState(),
+        model_factory=model_factory,
+    )
+
+
+def test_explore_tool_reuses_text2sql_and_returns_sql_and_table_artifacts() -> None:
+    workflows = StubWorkflows()
+    model_factory = ScriptedModelFactory(
+        [("explore", {"question": "fraud rate by card type"})]
+    )
+    agent = create_agent(
+        workflows,
+        model_factory,
+        history=[ConversationMessage(role="user", content="Start an analysis")],
+    )
+
+    response = asyncio.run(agent.respond("What about card types?"))
+
+    assert workflows.queries == ["fraud rate by card type"]
+    assert [artifact.type for artifact in response.artifacts] == ["sql", "table"]
+    assert isinstance(response.artifacts[0], SQLArtifact)
+    assert response.working_state.last_sql == response.artifacts[0].sql
+    assert response.metadata.intent == "EXPLORE"
+    assert response.metadata.repair_count == 1
+    assert response.metadata.cache_hit is True
+    assert model_factory.histories[0][0]["content"] == [{"text": "Start an analysis"}]
+    assert model_factory.models[0].cleaned is True
+
+
+def test_generate_rule_tool_updates_authoritative_candidate_state() -> None:
+    workflows = StubWorkflows()
+    model_factory = ScriptedModelFactory(
+        [("generate_rule", {"instruction": "transactions above $1,000"})]
+    )
+    agent = create_agent(
+        workflows,
+        model_factory,
+        WorkingState(
+            candidate_rule="amount_usd > 500",
+            previous_rule="amount_usd > 250",
+        ),
+    )
+
+    response = asyncio.run(agent.respond("Create a new rule"))
+
+    assert workflows.generated == ["transactions above $1,000"]
+    assert response.artifacts[0].type == "candidate_rule"
+    assert response.working_state.candidate_rule == "amount_usd > 1000"
+    assert response.working_state.previous_rule is None
+    assert response.metadata.intent == "GENERATE_RULE"
+    assert response.metadata.repair_count == 1
+
+
+def test_refine_rule_uses_explicit_working_state_not_model_arguments() -> None:
+    workflows = StubWorkflows()
+    model_factory = ScriptedModelFactory(
+        [("refine_rule", {"instruction": "raise it to $1,500"})]
+    )
+    agent = create_agent(
+        workflows,
+        model_factory,
+        WorkingState(candidate_rule="amount_usd > 1000"),
+    )
+
+    response = asyncio.run(agent.respond("Make it stricter"))
+
+    assert workflows.refined == [("amount_usd > 1000", "raise it to $1,500")]
+    assert response.working_state.previous_rule == "amount_usd > 1000"
+    assert response.working_state.candidate_rule == "amount_usd > 1500"
+    assert response.metadata.intent == "REFINE_RULE"
+
+
+def test_backtest_rule_uses_candidate_state_and_stores_small_result() -> None:
+    workflows = StubWorkflows()
+    model_factory = ScriptedModelFactory([("backtest_rule", {})])
+    agent = create_agent(
+        workflows,
+        model_factory,
+        WorkingState(candidate_rule="amount_usd > 1000"),
+    )
+
+    response = asyncio.run(agent.respond("Backtest it"))
+
+    assert workflows.backtested == ["amount_usd > 1000"]
+    assert response.artifacts[0].type == "backtest"
+    assert response.working_state.last_backtest is not None
+    assert response.working_state.last_backtest.metrics.labelled_population == 80
+    assert response.metadata.intent == "BACKTEST_RULE"
+
+
+def test_compare_rules_uses_current_and_previous_working_state() -> None:
+    workflows = StubWorkflows()
+    model_factory = ScriptedModelFactory([("compare_rules", {})])
+    agent = create_agent(
+        workflows,
+        model_factory,
+        WorkingState(
+            candidate_rule="amount_usd > 1500",
+            previous_rule="amount_usd > 1000",
+        ),
+    )
+
+    response = asyncio.run(agent.respond("Is it better?"))
+
+    assert workflows.compared == [("amount_usd > 1500", "amount_usd > 1000")]
+    assert response.artifacts[0].type == "rule_comparison"
+    assert response.metadata.intent == "COMPARE_RULES"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "state", "intent", "missing_fields"),
+    [
+        ("refine_rule", WorkingState(), "REFINE_RULE", ["candidate_rule"]),
+        ("backtest_rule", WorkingState(), "BACKTEST_RULE", ["candidate_rule"]),
+        (
+            "compare_rules",
+            WorkingState(candidate_rule="amount_usd > 1000"),
+            "COMPARE_RULES",
+            ["previous_rule"],
+        ),
+    ],
+)
+def test_state_dependent_tools_fail_before_calling_service(
+    tool_name: str,
+    state: WorkingState,
+    intent: str,
+    missing_fields: list[str],
+) -> None:
+    workflows = StubWorkflows()
+    actions = [
+        (tool_name, {"instruction": "change it"} if tool_name == "refine_rule" else {})
+    ]
+    model_factory = ScriptedModelFactory(actions)
+    agent = create_agent(workflows, model_factory, state)
+
+    with pytest.raises(MissingChatState) as raised:
+        asyncio.run(agent.respond("Do it"))
+
+    assert raised.value.intent == intent
+    assert raised.value.missing_fields == missing_fields
+    assert workflows.refined == []
+    assert workflows.backtested == []
+    assert workflows.compared == []
+    assert model_factory.models[0].cleaned is True
+
+
+def test_chat_agent_rejects_multiple_or_missing_tool_selections() -> None:
+    workflows = StubWorkflows()
+    multiple = create_agent(
+        workflows,
+        ScriptedModelFactory(
+            [
+                ("generate_rule", {"instruction": "high amount"}),
+                ("explore", {"question": "count transactions"}),
+            ]
+        ),
+    )
+    missing = create_agent(workflows, ScriptedModelFactory([]))
+
+    with pytest.raises(ChatAgentError, match="more than one"):
+        asyncio.run(multiple.respond("Do two things"))
+    with pytest.raises(ChatAgentError, match="did not select"):
+        asyncio.run(missing.respond("Hello"))
+
+
+@pytest.mark.parametrize(
+    ("response_text", "message"),
+    [
+        (" ", "no assistant message"),
+        ("x" * 10_001, "oversized assistant message"),
+    ],
+)
+def test_chat_agent_rejects_invalid_assistant_text(
+    response_text: str, message: str
+) -> None:
+    workflows = StubWorkflows()
+    agent = create_agent(
+        workflows,
+        ScriptedModelFactory(
+            [("generate_rule", {"instruction": "high amount"})],
+            response_text=response_text,
+        ),
+    )
+
+    with pytest.raises(ChatAgentError, match=message):
+        asyncio.run(agent.respond("Create a rule"))
+
+
+def test_backtest_tool_returns_invalid_working_state_error() -> None:
+    workflows = InvalidBacktestWorkflows()
+    agent = create_agent(
+        workflows,
+        ScriptedModelFactory([("backtest_rule", {})]),
+        WorkingState(candidate_rule="is_fraud = 1"),
+    )
+
+    with pytest.raises(InvalidChatState) as raised:
+        asyncio.run(agent.respond("Backtest it"))
+
+    assert raised.value.intent == "BACKTEST_RULE"
+    assert raised.value.detail["errors"][0]["code"] == "OUTCOME_COLUMN_FORBIDDEN"
+
+
+def test_factory_creates_fresh_agents_without_cross_request_state() -> None:
+    workflows = StubWorkflows()
+    model_factory = ScriptedModelFactory(
+        [("backtest_rule", {})],
+        [("backtest_rule", {})],
+    )
+    factory = ChatAgentFactory(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        model_factory=model_factory,
+    )
+
+    first = factory.create([], WorkingState(candidate_rule="amount_usd > 1000"))
+    second = factory.create([], WorkingState(candidate_rule="amount_usd > 2000"))
+    first_response = asyncio.run(first.respond("Backtest it"))
+    second_response = asyncio.run(second.respond("Backtest it"))
+
+    assert first is not second
+    assert workflows.backtested == ["amount_usd > 1000", "amount_usd > 2000"]
+    assert first_response.working_state.candidate_rule == "amount_usd > 1000"
+    assert second_response.working_state.candidate_rule == "amount_usd > 2000"
