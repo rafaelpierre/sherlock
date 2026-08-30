@@ -31,9 +31,14 @@ def test_empty_conversation_state_has_explicit_empty_working_state() -> None:
 
 
 def test_conversation_history_keeps_latest_twenty_messages() -> None:
-    messages = [
-        ConversationMessage(role="user", content=f"message {index}")
-        for index in range(MAX_HISTORY_MESSAGES + 3)
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": "discarded before nested validation"},
+        {"role": "user", "content": "also discarded"},
+        {"role": "user", "content": "discarded too"},
+        *[
+            {"role": "user", "content": f"message {index}"}
+            for index in range(MAX_HISTORY_MESSAGES)
+        ],
     ]
 
     state = ConversationState(
@@ -43,8 +48,8 @@ def test_conversation_history_keeps_latest_twenty_messages() -> None:
     )
 
     assert len(state.messages) == MAX_HISTORY_MESSAGES
-    assert state.messages[0].content == "message 3"
-    assert state.messages[-1].content == "message 22"
+    assert state.messages[0].content == "message 0"
+    assert state.messages[-1].content == "message 19"
     assert state.working_state.candidate_rule == "amount_usd > 1000"
 
 
@@ -88,6 +93,36 @@ def test_conversation_state_round_trips_structured_referents() -> None:
     assert restored == state
     assert restored.working_state.last_backtest is not None
     assert restored.working_state.last_backtest.metrics.unlabelled_flagged == 1
+
+
+@pytest.mark.parametrize("rule", [" ", "x" * 5_001])
+def test_saved_backtest_rejects_unbounded_rule(rule: str) -> None:
+    with pytest.raises(ValidationError):
+        WorkingState.model_validate(
+            {
+                "last_backtest": {
+                    "rule": rule,
+                    "metrics": {
+                        "population": 0,
+                        "labelled_population": 0,
+                        "fraud_total": 0,
+                        "transactions_flagged": 0,
+                        "unlabelled_flagged": 0,
+                        "fraud_caught": 0,
+                        "false_positives": 0,
+                        "false_negatives": 0,
+                        "true_negatives": 0,
+                        "precision": None,
+                        "recall": None,
+                        "false_positive_rate": None,
+                        "fraud_value_total_usd": 0.0,
+                        "fraud_value_captured_usd": 0.0,
+                        "fraud_value_recall": None,
+                        "alerts_per_day": None,
+                    },
+                }
+            }
+        )
 
 
 @pytest.mark.parametrize(

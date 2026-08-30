@@ -127,8 +127,16 @@ class BacktestMetricsResponse(BaseModel):
 
 
 class BacktestResponse(BaseModel):
-    rule: str
+    rule: str = Field(min_length=1, max_length=5_000)
     metrics: BacktestMetricsResponse
+
+    @field_validator("rule")
+    @classmethod
+    def rule_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("rule must not be blank")
+        return value
 
 
 MAX_HISTORY_MESSAGES = 20
@@ -181,9 +189,9 @@ class ConversationState(BaseModel):
     messages: list[ConversationMessage] = Field(default_factory=list)
     working_state: WorkingState = Field(default_factory=WorkingState)
 
-    @field_validator("messages")
+    @field_validator("messages", mode="before")
     @classmethod
-    def keep_recent_history(
-        cls, value: list[ConversationMessage]
-    ) -> list[ConversationMessage]:
-        return value[-MAX_HISTORY_MESSAGES:]
+    def keep_recent_history(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return value[-MAX_HISTORY_MESSAGES:]
+        return value
