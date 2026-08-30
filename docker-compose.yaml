@@ -1,0 +1,72 @@
+name: sherlock
+
+services:
+  mcp:
+    build:
+      context: ./mcp
+    ports:
+      - "127.0.0.1:${MCP_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_DEFAULT_REGION
+      - AWS_PROFILE
+      - AWS_REGION
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - SHERLOCK_MCP_TRANSPORT=streamable-http
+      - SHERLOCK_MCP_URL=http://mcp:8000/mcp
+    volumes:
+      - type: bind
+        source: ${AWS_CONFIG_DIR:-~/.aws}
+        target: /run/sherlock-aws
+        read_only: true
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      mcp:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/v1/health', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

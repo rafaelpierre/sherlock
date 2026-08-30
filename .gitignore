@@ -1,6 +1,10 @@
 __pycache__
 .venv
 .coverage
+.env
+.env.*
+!.env.example
+.aws/
 dist
 frontend/node_modules/
 frontend/coverage/

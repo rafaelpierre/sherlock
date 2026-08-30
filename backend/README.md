@@ -15,6 +15,9 @@ uv sync
 uv run backend-api
 ```
 
+The readiness endpoint is `GET http://localhost:8080/v1/health`. It reports API
+process readiness without invoking Bedrock or running an analytical query.
+
 Submit a standalone analytics question directly to the Text2SQL service:
 
 ```bash
@@ -91,6 +94,26 @@ uv run backend "Show monthly fraud rates for the last year in the database"
 In Docker or AWS, set `SHERLOCK_MCP_URL` to the MCP service's private reachable
 URL, for example `http://fraud-mcp:8000/mcp`. Do not use `0.0.0.0` as a client
 address.
+
+## Docker
+
+Build the independently runnable backend image from this directory:
+
+```bash
+docker build -t sherlock-backend .
+docker run --rm -p 8080:8080 \
+  --add-host host.docker.internal=host-gateway \
+  -e SHERLOCK_MCP_TRANSPORT=streamable-http \
+  -e SHERLOCK_MCP_URL=http://host.docker.internal:8000/mcp \
+  -v ~/.aws:/run/sherlock-aws:ro \
+  sherlock-backend
+```
+
+For the supported full-stack workflow, run `docker compose up --build --wait`
+from the repository root. Compose waits for MCP readiness and supplies its
+private URL automatically. At startup, profile files are copied from the
+read-only mount into the container with permissions for the unprivileged app
+user; AWS credentials remain outside the image.
 
 ## Backend configuration
 
