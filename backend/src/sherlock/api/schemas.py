@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -128,3 +129,78 @@ class BacktestMetricsResponse(BaseModel):
 class BacktestResponse(BaseModel):
     rule: str
     metrics: BacktestMetricsResponse
+
+
+class StoredBacktest(BaseModel):
+    """Bounded backtest state safe for a client to send on later requests."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rule: str = Field(min_length=1, max_length=20_000)
+    metrics: BacktestMetricsResponse
+
+    @field_validator("rule")
+    @classmethod
+    def rule_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("rule must not be blank")
+        return value
+
+
+MAX_HISTORY_MESSAGES = 20
+
+
+class ConversationMessage(BaseModel):
+    """One bounded, client-owned conversational turn."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=10_000)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("message content must not be blank")
+        return value
+
+
+class WorkingState(BaseModel):
+    """Authoritative structured referents supplied with every chat request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_rule: str | None = Field(default=None, max_length=20_000)
+    previous_rule: str | None = Field(default=None, max_length=20_000)
+    last_sql: str | None = Field(default=None, max_length=20_000)
+    last_backtest: StoredBacktest | None = None
+
+    @field_validator("candidate_rule", "previous_rule", "last_sql")
+    @classmethod
+    def optional_text_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("working-state text must not be blank")
+        return value
+
+
+class ConversationState(BaseModel):
+    """Complete stateless conversation context owned by the client."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: UUID
+    messages: list[ConversationMessage] = Field(default_factory=list)
+    working_state: WorkingState = Field(default_factory=WorkingState)
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def keep_recent_history(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return value[-MAX_HISTORY_MESSAGES:]
+        return value
