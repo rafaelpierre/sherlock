@@ -10,6 +10,8 @@ from sherlock.api.schemas import (
     BacktestResponse,
     QueryRequest,
     QueryResponse,
+    RuleComparisonRequest,
+    RuleComparisonResponse,
     RuleGenerateRequest,
     RuleGenerateResponse,
     RuleRefineRequest,
@@ -20,6 +22,10 @@ from sherlock.services.backtest import (
     BacktestError,
     BacktestService,
     InvalidBacktestRule,
+)
+from sherlock.services.rule_comparison import (
+    InvalidComparisonRule,
+    RuleComparisonService,
 )
 from sherlock.services.rule_generation import (
     InvalidCurrentRule,
@@ -56,6 +62,15 @@ def get_backtest_service(request: Request) -> BacktestService:
 
 
 BacktestDependency = Annotated[BacktestService, Depends(get_backtest_service)]
+
+
+def get_rule_comparison_service(request: Request) -> RuleComparisonService:
+    return request.app.state.rule_comparison_service
+
+
+RuleComparisonDependency = Annotated[
+    RuleComparisonService, Depends(get_rule_comparison_service)
+]
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -134,3 +149,25 @@ async def backtest_rule(
             detail=str(exc),
         ) from exc
     return BacktestResponse.model_validate(result)
+
+
+@router.post("/rules/compare", response_model=RuleComparisonResponse)
+async def compare_rules(
+    request: RuleComparisonRequest,
+    service: RuleComparisonDependency,
+) -> RuleComparisonResponse:
+    """Compare current and previous rules using deterministic backtests."""
+
+    try:
+        result = await service.compare(request.current_rule, request.previous_rule)
+    except InvalidComparisonRule as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"rule_role": exc.role, **exc.validation.as_dict()},
+        ) from exc
+    except BacktestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return RuleComparisonResponse.model_validate(result)

@@ -105,6 +105,21 @@ class RuleRequest(BaseModel):
         return value
 
 
+class RuleComparisonRequest(BaseModel):
+    """Two explicit candidate rule versions to compare deterministically."""
+
+    current_rule: str = Field(min_length=1, max_length=5_000)
+    previous_rule: str = Field(min_length=1, max_length=5_000)
+
+    @field_validator("current_rule", "previous_rule")
+    @classmethod
+    def rules_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("comparison rules must not be blank")
+        return value
+
+
 class BacktestMetricsResponse(BaseModel):
     model_config = ConfigDict(ser_json_inf_nan="null")
 
