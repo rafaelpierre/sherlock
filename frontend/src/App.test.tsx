@@ -38,6 +38,9 @@ describe("Sherlock application", () => {
     expect(screen.getByText("Fraud hypothesis")).toBeInTheDocument();
     expect(screen.getByText("Historical replay")).toBeInTheDocument();
     expect(screen.getByText("Current vs previous")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Alert volume includes 3 current and 3 previous unlabelled flagged/),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("Chart of accounts")).toBeInTheDocument();
 
     const request = vi.mocked(fetch).mock.calls[0];

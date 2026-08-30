@@ -206,6 +206,15 @@ function ComparisonCard({
           change={artifact.delta.fraud_value_captured_usd}
         />
       </div>
+      {(artifact.current.metrics.unlabelled_flagged > 0 ||
+        artifact.previous.metrics.unlabelled_flagged > 0) && (
+        <p className="artifact-note">
+          Alert volume includes {integer.format(artifact.current.metrics.unlabelled_flagged)}
+          {" current and "}
+          {integer.format(artifact.previous.metrics.unlabelled_flagged)} previous unlabelled flagged
+          transactions. Quality metrics use labelled data only.
+        </p>
+      )}
     </section>
   );
 }
