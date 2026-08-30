@@ -1,3 +1,4 @@
+import { chatResponseSchema } from "./types";
 import type { ChatResponse, ConversationMessage, WorkingState } from "./types";
 
 export class ChatApiError extends Error {}
@@ -34,5 +35,15 @@ export async function sendChat(
     }
     throw new ChatApiError(detail);
   }
-  return (await response.json()) as ChatResponse;
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new ChatApiError("Sherlock returned an invalid response. Please try again.");
+  }
+  const result = chatResponseSchema.safeParse(body);
+  if (!result.success) {
+    throw new ChatApiError("Sherlock returned an invalid response. Please try again.");
+  }
+  return result.data;
 }
