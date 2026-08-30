@@ -102,6 +102,7 @@ Build the independently runnable backend image from this directory:
 ```bash
 docker build -t sherlock-backend .
 docker run --rm -p 8080:8080 \
+  --add-host host.docker.internal=host-gateway \
   -e SHERLOCK_MCP_TRANSPORT=streamable-http \
   -e SHERLOCK_MCP_URL=http://host.docker.internal:8000/mcp \
   -v ~/.aws:/run/sherlock-aws:ro \
