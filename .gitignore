@@ -2,6 +2,7 @@ __pycache__
 .venv
 .coverage
 dist
+frontend/node_modules/
 specs
 
 .terraform

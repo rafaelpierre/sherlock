@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -37,8 +38,15 @@ class StubMCPClient:
     def __init__(self, result: dict[str, object]) -> None:
         self.result = result
 
-    async def call_tool_async(self, **kwargs):
-        assert kwargs["name"] == "get_schema"
+    async def call_tool_async(
+        self,
+        tool_use_id: str,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, object]:
+        assert tool_use_id
+        assert name == "get_schema"
+        assert arguments == {}
         return self.result
 
 
@@ -153,7 +161,7 @@ def test_execution_error_is_returned_structurally() -> None:
 
 def test_mcp_schema_provider_returns_relation_columns() -> None:
     provider = MCPSchemaProvider(
-        StubMCPClient(  # type: ignore[arg-type]
+        StubMCPClient(
             {
                 "structuredContent": {
                     "relations": [
@@ -183,7 +191,7 @@ def test_mcp_schema_provider_returns_relation_columns() -> None:
 def test_mcp_schema_provider_rejects_unavailable_or_invalid_data(
     payload: dict[str, object],
 ) -> None:
-    provider = MCPSchemaProvider(StubMCPClient(payload))  # type: ignore[arg-type]
+    provider = MCPSchemaProvider(StubMCPClient(payload))
 
     with pytest.raises(RuleSchemaError):
         asyncio.run(provider.columns("fraud_transactions"))

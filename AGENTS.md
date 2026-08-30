@@ -163,6 +163,8 @@ cd backend
 uv sync --locked --dev
 uv run ruff check .
 uv run ruff format --check .
+uv run ty check
+uv run complexipy . --max-complexity-allowed 15 --failed --color no
 uv run pytest --cov=sherlock --cov-report=term-missing --cov-fail-under=80
 ```
 
@@ -190,10 +192,18 @@ terraform -chdir=terraform fmt -check
 terraform -chdir=terraform validate
 ```
 
+For frontend changes:
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run format:check
+```
+
 For documentation-only changes, run `git diff --check` and manually verify all
-commands and links. When frontend tooling is introduced, follow its checked-in
-package scripts and CI workflow; do not invent commands that are not present in
-the repository.
+commands and links. Do not invent quality commands that are not present in the
+repository.
 
 ### 4. Commit, push, and open the PR
 
@@ -217,8 +227,9 @@ issues in one PR solely to save review time.
 
 Applicable path-based CI runs on pull requests:
 
-- `Backend CI`: Ruff plus pytest with at least 80% coverage.
+- `Backend CI`: Ruff, ty, Complexipy, and pytest with at least 80% coverage.
 - `MCP CI`: Ruff, ty, and pytest with at least 80% coverage.
+- `Frontend CI`: Oxlint and Oxfmt checks after a locked npm install.
 - `Codex Review Gate`: requires a Codex review for the exact current head SHA.
 
 The Codex review requirement applies even to documentation-only PRs. GitHub

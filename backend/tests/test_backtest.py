@@ -67,7 +67,7 @@ def test_backtest_calculates_quality_and_operational_metrics() -> None:
     executor = StubExecutor(aggregate_result())
     service = BacktestService(
         StubValidator(),
-        executor,  # type: ignore[arg-type]
+        executor,
     )
 
     result = asyncio.run(service.backtest("amount_usd > 1000"))
@@ -84,7 +84,7 @@ def test_backtest_calculates_quality_and_operational_metrics() -> None:
 
 def test_zero_denominators_return_null_ratios() -> None:
     service = BacktestService(
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
         StubExecutor(aggregate_result([0] * 12)),
     )
 
@@ -101,7 +101,7 @@ def test_zero_denominators_return_null_ratios() -> None:
 def test_invalid_rule_stops_before_execution() -> None:
     service = BacktestService(
         StubValidator(False),
-        StubExecutor(aggregate_result()),  # type: ignore[arg-type]
+        StubExecutor(aggregate_result()),
     )
 
     with pytest.raises(InvalidBacktestRule) as caught:
@@ -112,7 +112,7 @@ def test_invalid_rule_stops_before_execution() -> None:
 
 def test_execution_error_is_exposed_as_backtest_error() -> None:
     service = BacktestService(
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
         StubExecutor(
             ExecutionResult(
                 sql="SELECT aggregate",
@@ -138,7 +138,7 @@ def test_execution_error_is_exposed_as_backtest_error() -> None:
 def test_invalid_aggregate_data_is_rejected(result: ExecutionResult) -> None:
     service = BacktestService(
         StubValidator(),
-        StubExecutor(result),  # type: ignore[arg-type]
+        StubExecutor(result),
     )
 
     with pytest.raises(BacktestError, match="invalid aggregate data"):
@@ -158,7 +158,7 @@ def test_lifecycle_is_started_once_and_closed() -> None:
         closes += 1
 
     service = BacktestService(
-        StubValidator(),  # type: ignore[arg-type]
+        StubValidator(),
         StubExecutor(aggregate_result()),
         start_callback=start,
         close_callback=close,

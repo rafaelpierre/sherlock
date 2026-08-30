@@ -16,6 +16,7 @@ from sherlock.services.rule_validation import (
     MCPSchemaProvider,
     RuleValidationResult,
     RuleValidationService,
+    RuleValidator,
 )
 from sherlock.services.text2sql import GENERATOR_TOOLS, MCPQueryExecutor
 
@@ -110,7 +111,7 @@ class RuleGenerationService:
     def __init__(
         self,
         generator: RuleGenerator,
-        validator: RuleValidationService,
+        validator: RuleValidator,
         *,
         max_repair_attempts: int = 2,
         start_callback: Callable[[], Awaitable[Any]] | None = None,

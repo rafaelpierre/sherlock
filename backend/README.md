@@ -114,4 +114,6 @@ queries.
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
+uv run ty check
+uv run complexipy . --max-complexity-allowed 15 --failed --color no
 ```

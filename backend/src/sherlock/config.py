@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 MCPTransport = Literal["stdio", "streamable-http"]
 
@@ -61,7 +61,7 @@ class Settings:
         headers_value = os.getenv("SHERLOCK_MCP_HTTP_HEADERS")
 
         return cls(
-            mcp_transport=cast(MCPTransport, transport),
+            mcp_transport=transport,
             mcp_url=os.getenv("SHERLOCK_MCP_URL", "http://localhost:8000/mcp").strip(),
             mcp_stdio_command=os.getenv("SHERLOCK_MCP_STDIO_COMMAND", "uv").strip(),
             mcp_stdio_args=(

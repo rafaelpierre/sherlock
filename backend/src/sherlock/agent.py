@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 from strands import Agent
 from strands.tools.mcp import MCPClient
@@ -102,4 +104,5 @@ def create_agent(settings: Settings | None = None) -> Agent:
 
     # MCPClient is a Strands ToolProvider. Agent discovers MCP tools and owns the
     # connection lifecycle; MCPAgentTool adapters are created by the client.
-    return Agent(system_prompt=SYSTEM_PROMPT, tools=clients)
+    tools: list[Any] = list(clients)
+    return Agent(system_prompt=SYSTEM_PROMPT, tools=tools)
