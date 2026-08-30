@@ -12,6 +12,8 @@ from sherlock.api.schemas import (
     QueryResponse,
     RuleGenerateRequest,
     RuleGenerateResponse,
+    RuleRefineRequest,
+    RuleRefineResponse,
     RuleRequest,
 )
 from sherlock.services.backtest import (
@@ -19,7 +21,11 @@ from sherlock.services.backtest import (
     BacktestService,
     InvalidBacktestRule,
 )
-from sherlock.services.rule_generation import RuleGenerationError, RuleGenerationService
+from sherlock.services.rule_generation import (
+    InvalidCurrentRule,
+    RuleGenerationError,
+    RuleGenerationService,
+)
 from sherlock.services.text2sql import Text2SQLError, Text2SQLService
 
 router = APIRouter(prefix="/v1")
@@ -84,6 +90,28 @@ async def generate_rule(
             detail=str(exc),
         ) from exc
     return RuleGenerateResponse.model_validate(result)
+
+
+@router.post("/rules/refine", response_model=RuleRefineResponse)
+async def refine_rule(
+    request: RuleRefineRequest,
+    service: RuleGenerationDependency,
+) -> RuleRefineResponse:
+    """Apply a contextual modification to an explicit candidate rule."""
+
+    try:
+        result = await service.refine(request.rule, request.instruction)
+    except InvalidCurrentRule as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.validation.as_dict(),
+        ) from exc
+    except RuleGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return RuleRefineResponse.model_validate(result)
 
 
 @router.post("/rules/backtest", response_model=BacktestResponse)

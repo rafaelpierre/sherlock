@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from sherlock.services.rule_generation import RuleGenerationService
+from sherlock.services.rule_generation import InvalidCurrentRule, RuleGenerationService
 from sherlock.services.rule_validation import (
     RuleValidationError,
     RuleValidationResult,
@@ -27,6 +27,9 @@ class StubGenerator:
         validation: RuleValidationResult,
     ) -> str:
         self.repairs.append((instruction, previous_rule))
+        return next(self.rules)
+
+    async def refine(self, rule: str, instruction: str) -> str:
         return next(self.rules)
 
 
@@ -121,3 +124,44 @@ def test_lifecycle_callbacks_run_once() -> None:
 
     assert starts == 1
     assert closes == 1
+
+
+def test_refinement_preserves_previous_rule() -> None:
+    generator = StubGenerator(["amount_usd > 1500 AND card_type = 'Debit'"])
+    service = RuleGenerationService(
+        generator, StubValidator()  # type: ignore[arg-type]
+    )
+
+    result = asyncio.run(
+        service.refine(
+            "amount_usd > 1000 AND card_type = 'Debit'",
+            "raise the threshold to $1,500",
+        )
+    )
+
+    assert result["previous_rule"] == "AMOUNT_USD > 1000 AND CARD_TYPE = 'DEBIT'"
+    assert result["rule"] == "AMOUNT_USD > 1500 AND CARD_TYPE = 'DEBIT'"
+    assert result["repair_count"] == 0
+
+
+def test_refinement_repairs_invalid_candidate() -> None:
+    generator = StubGenerator(["missing > 1", "amount_usd > 1500"])
+    service = RuleGenerationService(
+        generator, StubValidator()  # type: ignore[arg-type]
+    )
+
+    result = asyncio.run(service.refine("amount_usd > 1000", "raise it"))
+
+    assert result["valid"] is True
+    assert result["repair_count"] == 1
+
+
+def test_refinement_rejects_invalid_current_rule() -> None:
+    service = RuleGenerationService(
+        StubGenerator([]), StubValidator()  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(InvalidCurrentRule) as caught:
+        asyncio.run(service.refine("missing > 1", "raise it"))
+
+    assert caught.value.validation.errors[0].code == "UNKNOWN_COLUMN"

@@ -24,6 +24,14 @@ class RuleGenerationError(RuntimeError):
     """The candidate-rule workflow could not produce a usable result."""
 
 
+class InvalidCurrentRule(RuleGenerationError):
+    """A rule refinement request supplied an invalid current rule."""
+
+    def __init__(self, validation: RuleValidationResult) -> None:
+        super().__init__("Current candidate rule is invalid.")
+        self.validation = validation
+
+
 class RuleGenerator(Protocol):
     async def generate(self, instruction: str) -> str: ...
 
@@ -34,6 +42,8 @@ class RuleGenerator(Protocol):
         validation: RuleValidationResult,
     ) -> str: ...
 
+    async def refine(self, rule: str, instruction: str) -> str: ...
+
 
 @dataclass(frozen=True)
 class RuleGenerationResult:
@@ -41,6 +51,11 @@ class RuleGenerationResult:
     valid: bool
     repair_count: int
     errors: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class RuleRefinementResult(RuleGenerationResult):
+    previous_rule: str
 
 
 class StrandsRuleGenerator:
@@ -63,6 +78,15 @@ class StrandsRuleGenerator:
             f"Invalid candidate rule:\n{previous_rule}\n\n"
             f"Validation errors:\n{json.dumps(validation.as_dict(), sort_keys=True)}\n\n"
             "Return a corrected WHERE predicate."
+        )
+        return await asyncio.to_thread(self._invoke, prompt)
+
+    async def refine(self, rule: str, instruction: str) -> str:
+        prompt = (
+            f"Current candidate rule:\n{rule}\n\n"
+            f"Refinement instruction:\n{instruction}\n\n"
+            "Return the complete refined WHERE predicate. Preserve every unrelated "
+            "condition and apply only the requested modification."
         )
         return await asyncio.to_thread(self._invoke, prompt)
 
@@ -128,6 +152,33 @@ class RuleGenerationService:
             valid=validation.valid,
             repair_count=repair_count,
             errors=[asdict(error) for error in validation.errors],
+        )
+        return asdict(result)
+
+    async def refine(self, rule: str, instruction: str) -> dict[str, Any]:
+        """Validate the current rule and produce its next transient version."""
+
+        await self.start()
+        current = await self._validator.validate(rule)
+        if not current.valid or current.rule is None:
+            raise InvalidCurrentRule(current)
+
+        candidate = await self._generator.refine(current.rule, instruction)
+        validation = await self._validator.validate(candidate)
+        repair_count = 0
+        while not validation.valid and repair_count < self._max_repair_attempts:
+            candidate = await self._generator.repair(
+                instruction, candidate, validation
+            )
+            repair_count += 1
+            validation = await self._validator.validate(candidate)
+
+        result = RuleRefinementResult(
+            rule=validation.rule,
+            valid=validation.valid,
+            repair_count=repair_count,
+            errors=[asdict(error) for error in validation.errors],
+            previous_rule=current.rule,
         )
         return asdict(result)
 
