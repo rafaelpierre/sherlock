@@ -5,7 +5,7 @@ import { sendChat } from "./api";
 import { ArtifactView } from "./Artifacts";
 import { PaperclipIcon, PlusIcon, SendIcon, SparkIcon } from "./Icons";
 import { loadInvestigation, newInvestigation, saveInvestigation } from "./store";
-import type { Investigation, TranscriptMessage } from "./types";
+import type { Investigation, StreamActivity, TranscriptMessage } from "./types";
 import "./styles.css";
 
 const suggestions = [
@@ -108,6 +108,31 @@ function Activity({ message }: { message: string }) {
   );
 }
 
+function StreamActivityView({ activity }: { activity: StreamActivity }) {
+  const [open, setOpen] = useState(!activity.result);
+  const completed = Boolean(activity.result);
+
+  useEffect(() => {
+    if (completed) setOpen(false);
+  }, [completed]);
+
+  return (
+    <details
+      className="stream-activity"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <span>{activity.kind === "agent_handoff" ? "Agent handoff" : "Tool call"}</span>
+        <strong>{activity.name}</strong>
+        <small>{completed ? "Complete" : "Running"}</small>
+      </summary>
+      <p>{activity.message}</p>
+      {activity.result && <div className="stream-result">{activity.result}</div>}
+    </details>
+  );
+}
+
 function Message({ message }: { message: TranscriptMessage }) {
   if (message.role === "user")
     return (
@@ -117,26 +142,34 @@ function Message({ message }: { message: TranscriptMessage }) {
       </article>
     );
   return (
-    <article className="assistant-message">
+    <article
+      aria-live={message.id?.startsWith("stream-") ? "polite" : undefined}
+      className="assistant-message"
+    >
       <div className="assistant-mark">
         <SparkIcon />
       </div>
       <div className="assistant-content">
         <span className="message-label">Sherlock</span>
-        <div className="prose">
-          <Markdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              table: ({ children }) => (
-                <div className="table-scroll markdown-table">
-                  <table>{children}</table>
-                </div>
-              ),
-            }}
-          >
-            {message.content}
-          </Markdown>
-        </div>
+        {message.content && (
+          <div className="prose">
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                table: ({ children }) => (
+                  <div className="table-scroll markdown-table">
+                    <table>{children}</table>
+                  </div>
+                ),
+              }}
+            >
+              {message.content}
+            </Markdown>
+          </div>
+        )}
+        {message.activities?.map((activity) => (
+          <StreamActivityView activity={activity} key={activity.id} />
+        ))}
         {message.artifacts?.map((artifact, index) => (
           <ArtifactView artifact={artifact} key={`${artifact.type}-${index}`} />
         ))}
@@ -149,9 +182,11 @@ export default function App() {
   const [investigation, setInvestigation] = useState<Investigation>(() => loadInvestigation());
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
+  const [streamStarted, setStreamStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const requestGeneration = useRef(0);
+  const currentRequest = useRef<AbortController | null>(null);
   const empty = investigation.messages.length === 0;
 
   useEffect(() => {
@@ -169,10 +204,14 @@ export default function App() {
       return;
     }
     const requestId = ++requestGeneration.current;
+    const draftId = `stream-${requestId}`;
+    const controller = new AbortController();
+    currentRequest.current = controller;
     const history = investigation.messages.map(({ role, content }) => ({ role, content }));
     setInput("");
     setError(null);
     setPending(true);
+    setStreamStarted(false);
     setInvestigation((current) => ({
       ...current,
       title: current.title ?? message,
@@ -187,22 +226,61 @@ export default function App() {
         message,
         history,
         investigation.workingState,
+        {
+          onEvent: (event) => {
+            if (requestId !== requestGeneration.current) return;
+            setStreamStarted(true);
+            setInvestigation((current) => {
+              const draftIndex = current.messages.findIndex(({ id }) => id === draftId);
+              const draft: TranscriptMessage =
+                draftIndex === -1
+                  ? { id: draftId, role: "assistant", content: "", activities: [] }
+                  : current.messages[draftIndex];
+              let updated = draft;
+              if (event.type === "text_delta") {
+                updated = { ...draft, content: draft.content + event.delta };
+              } else if (event.type === "tool_call") {
+                updated = {
+                  ...draft,
+                  activities: [...(draft.activities ?? []), event],
+                };
+              } else {
+                updated = {
+                  ...draft,
+                  activities: (draft.activities ?? []).map((activity) =>
+                    activity.id === event.id ? { ...activity, result: event.message } : activity,
+                  ),
+                };
+              }
+              const messages = [...current.messages];
+              if (draftIndex === -1) messages.push(updated);
+              else messages[draftIndex] = updated;
+              return { ...current, messages: messages.slice(-20) };
+            });
+          },
+        },
+        controller.signal,
       );
       if (requestId !== requestGeneration.current) return;
-      setInvestigation((current) => ({
-        ...current,
-        workingState: response.working_state,
-        messages: [
-          ...current.messages,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant" as const,
-            content: response.message,
-            artifacts: response.artifacts,
-            intent: response.metadata.intent,
-          },
-        ].slice(-20),
-      }));
+      setInvestigation((current) => {
+        const draftIndex = current.messages.findIndex(({ id }) => id === draftId);
+        const completed: TranscriptMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: response.message,
+          artifacts: response.artifacts,
+          intent: response.metadata.intent,
+          activities: draftIndex === -1 ? undefined : current.messages[draftIndex].activities,
+        };
+        const messages = [...current.messages];
+        if (draftIndex === -1) messages.push(completed);
+        else messages[draftIndex] = completed;
+        return {
+          ...current,
+          workingState: response.working_state,
+          messages: messages.slice(-20),
+        };
+      });
     } catch (reason) {
       if (requestId !== requestGeneration.current) return;
       setInvestigation((current) => ({
@@ -214,16 +292,22 @@ export default function App() {
         reason instanceof Error ? reason.message : "Sherlock encountered an unexpected error.",
       );
     } finally {
-      if (requestId === requestGeneration.current) setPending(false);
+      if (requestId === requestGeneration.current) {
+        currentRequest.current = null;
+        setPending(false);
+      }
     }
   }
 
   function reset() {
+    currentRequest.current?.abort();
+    currentRequest.current = null;
     requestGeneration.current += 1;
     setInvestigation(newInvestigation());
     setInput("");
     setError(null);
     setPending(false);
+    setStreamStarted(false);
   }
 
   return (
@@ -298,7 +382,9 @@ export default function App() {
               {investigation.messages.map((message) => (
                 <Message message={message} key={message.id} />
               ))}
-              {pending && <Activity message={investigation.messages.at(-1)?.content ?? input} />}
+              {pending && !streamStarted && (
+                <Activity message={investigation.messages.at(-1)?.content ?? input} />
+              )}
               {error && (
                 <div className="error" role="alert">
                   <strong>Something interrupted the investigation</strong>

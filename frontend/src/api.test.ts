@@ -42,6 +42,23 @@ const invalidResponses: Array<[string, ResponseMutation]> = [
   ],
 ];
 
+function eventStreamResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8" } },
+  );
+}
+
+function event(name: string, data: unknown): string {
+  return `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 describe("chat API", () => {
   it("returns typed successful responses and caps history", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -55,6 +72,70 @@ describe("chat API", () => {
     const payload = JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body));
     expect(payload.history).toHaveLength(20);
     expect(payload.history[0].content).toBe("10");
+    expect((vi.mocked(fetch).mock.calls[0][1] as RequestInit).headers).toMatchObject({
+      Accept: "text/event-stream",
+    });
+  });
+
+  it("parses split SSE events and returns the authoritative completion", async () => {
+    const payload = [
+      ": heartbeat\r\n\r\n",
+      event("text_delta", { delta: "Accounts " }),
+      event("tool_call", {
+        id: "call-1",
+        kind: "tool_call",
+        name: "Text2SQL",
+        message: "Querying transactions",
+      }),
+      event("tool_result", { id: "call-1", message: "Found 2 rows" }),
+      event("text_delta", { delta: "linked" }),
+      event("complete", chatResponse),
+    ].join("");
+    const splitAt = [7, 31, 86, 151];
+    const chunks: string[] = [];
+    let offset = 0;
+    for (const end of splitAt) {
+      chunks.push(payload.slice(offset, end));
+      offset = end;
+    }
+    chunks.push(payload.slice(offset));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(eventStreamResponse(chunks));
+    const onEvent = vi.fn();
+
+    await expect(sendChat("id", "question", [], {}, { onEvent })).resolves.toEqual(chatResponse);
+    expect(onEvent.mock.calls.map(([streamEvent]) => streamEvent)).toEqual([
+      { type: "text_delta", delta: "Accounts " },
+      {
+        type: "tool_call",
+        id: "call-1",
+        kind: "tool_call",
+        name: "Text2SQL",
+        message: "Querying transactions",
+      },
+      { type: "tool_result", id: "call-1", message: "Found 2 rows" },
+      { type: "text_delta", delta: "linked" },
+    ]);
+  });
+
+  it.each([
+    ["closes before completion", event("text_delta", { delta: "Partial" })],
+    ["contains malformed JSON", "event: text_delta\ndata: {broken}\n\n"],
+    ["contains an unknown event", event("future_event", { value: true })],
+    ["returns a result without a call", event("tool_result", { id: "missing", message: "Done" })],
+  ])("rejects a stream that %s", async (_label, payload) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(eventStreamResponse([payload]));
+    await expect(sendChat("id", "question", [], {})).rejects.toEqual(
+      new ChatApiError("Sherlock returned an invalid response. Please try again."),
+    );
+  });
+
+  it("surfaces an SSE error event", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      eventStreamResponse([event("error", { message: "Analysis timed out." })]),
+    );
+    await expect(sendChat("id", "question", [], {})).rejects.toEqual(
+      new ChatApiError("Analysis timed out."),
+    );
   });
 
   it.each([
