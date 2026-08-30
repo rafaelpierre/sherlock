@@ -304,6 +304,17 @@ main.empty {
   margin-left: 7px;
   color: #779af0;
 }
+.input-error {
+  width: max-content;
+  max-width: 100%;
+  margin: 14px auto 0;
+  padding: 9px 13px;
+  border: 1px solid #efc2c8;
+  border-radius: 9px;
+  color: #8b3545;
+  background: #fff2f4;
+  font-size: 12px;
+}
 main.conversation {
   padding-bottom: 140px;
 }

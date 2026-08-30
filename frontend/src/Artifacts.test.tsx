@@ -53,4 +53,23 @@ describe("artifact rendering", () => {
     await user.click(screen.getByRole("tab", { name: "▥ Chart" }));
     expect(screen.getByLabelText("Chart of count")).toBeInTheDocument();
   });
+
+  it("does not chart signed values as positive bars", () => {
+    render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["name", "delta"],
+          rows: [
+            ["A", 3],
+            ["B", -2],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+    expect(screen.queryByRole("tab", { name: /Chart/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "-2" })).toBeInTheDocument();
+  });
 });

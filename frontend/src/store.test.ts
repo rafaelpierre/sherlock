@@ -15,6 +15,7 @@ describe("investigation persistence", () => {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
     expect(stored.messages).toHaveLength(20);
     expect(stored.messages[0]).not.toHaveProperty("artifacts");
+    expect(stored.messages[0].id).toBeTruthy();
   });
 
   it.each(["not json", JSON.stringify({ wrong: true })])(
@@ -45,6 +46,10 @@ describe("investigation persistence", () => {
         workingState: {},
       }),
     );
-    expect(loadInvestigation().messages[0]).toEqual({ role: "assistant", content: "Summary" });
+    expect(loadInvestigation().messages[0]).toMatchObject({
+      role: "assistant",
+      content: "Summary",
+    });
+    expect(loadInvestigation().messages[0].id).toBeTruthy();
   });
 });

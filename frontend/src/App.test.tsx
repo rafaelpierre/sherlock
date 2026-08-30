@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { STORAGE_KEY } from "./store";
@@ -74,6 +74,19 @@ describe("Sherlock application", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     await user.type(input, "line one{shift>}{enter}{/shift}line two");
     expect(input).toHaveValue("line one\nline two");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects overlong questions before adding them to the investigation", () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    render(<App />);
+    const input = screen.getByLabelText("Ask Sherlock");
+    fireEvent.change(input, { target: { value: "x".repeat(2_001) } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("alert")).toHaveTextContent("2,000 characters or fewer");
+    expect(
+      screen.getByRole("heading", { name: /what would you like to uncover/i }),
+    ).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

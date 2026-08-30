@@ -14,7 +14,11 @@ export function loadInvestigation(): Investigation {
     if (!parsed.conversationId || !Array.isArray(parsed.messages)) return newInvestigation();
     return {
       ...parsed,
-      messages: parsed.messages.slice(-20).map(({ role, content }) => ({ role, content })),
+      messages: parsed.messages.slice(-20).map(({ id, role, content }) => ({
+        id: id ?? crypto.randomUUID(),
+        role,
+        content,
+      })),
       workingState: parsed.workingState ?? {},
     };
   } catch {
@@ -27,7 +31,11 @@ export function saveInvestigation(investigation: Investigation): void {
     STORAGE_KEY,
     JSON.stringify({
       ...investigation,
-      messages: investigation.messages.slice(-20).map(({ role, content }) => ({ role, content })),
+      messages: investigation.messages.slice(-20).map(({ id, role, content }) => ({
+        id: id ?? crypto.randomUUID(),
+        role,
+        content,
+      })),
     }),
   );
 }

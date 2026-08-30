@@ -12,6 +12,7 @@ const suggestions = [
   "Create a candidate rule for high-value debit transactions",
   "Show fraud value by merchant category",
 ];
+const MAX_MESSAGE_LENGTH = 2_000;
 
 function Composer({
   value,
@@ -52,6 +53,7 @@ function Composer({
             : "Ask Sherlock anything about your fraud data…"
         }
         value={value}
+        maxLength={MAX_MESSAGE_LENGTH}
         disabled={disabled}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={keyDown}
@@ -150,6 +152,10 @@ export default function App() {
   async function submit(value = input) {
     const message = value.trim();
     if (!message || pending) return;
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      setError(`Questions must be ${MAX_MESSAGE_LENGTH.toLocaleString()} characters or fewer.`);
+      return;
+    }
     const requestId = ++requestGeneration.current;
     const history = investigation.messages.map(({ role, content }) => ({ role, content }));
     setInput("");
@@ -157,7 +163,7 @@ export default function App() {
     setPending(true);
     setInvestigation((current) => ({
       ...current,
-      messages: [...current.messages, { role: "user", content: message }],
+      messages: [...current.messages, { id: crypto.randomUUID(), role: "user", content: message }],
     }));
     try {
       const response = await sendChat(
@@ -173,6 +179,7 @@ export default function App() {
         messages: [
           ...current.messages,
           {
+            id: crypto.randomUUID(),
             role: "assistant" as const,
             content: response.message,
             artifacts: response.artifacts,
@@ -243,6 +250,11 @@ export default function App() {
               disabled={pending}
               centered
             />
+            {error && (
+              <div className="input-error" role="alert">
+                {error}
+              </div>
+            )}
             <div className="suggestions">
               {suggestions.map((suggestion) => (
                 <button type="button" key={suggestion} onClick={() => void submit(suggestion)}>
@@ -259,8 +271,8 @@ export default function App() {
               <h1>{investigation.messages.find((message) => message.role === "user")?.content}</h1>
             </div>
             <section className="transcript">
-              {investigation.messages.map((message, index) => (
-                <Message message={message} key={index} />
+              {investigation.messages.map((message) => (
+                <Message message={message} key={message.id} />
               ))}
               {pending && <Activity message={investigation.messages.at(-1)?.content ?? input} />}
               {error && (

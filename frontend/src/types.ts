@@ -69,6 +69,7 @@ export interface ChatResponse {
 }
 
 export interface TranscriptMessage extends ConversationMessage {
+  id?: string;
   artifacts?: Artifact[];
   intent?: string;
 }

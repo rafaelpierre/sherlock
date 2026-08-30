@@ -78,9 +78,17 @@ function BacktestCard({
 }
 
 function TableArtifact({ artifact }: { artifact: Extract<Artifact, { type: "table" }> }) {
-  const numericColumn =
+  const possibleNumericColumn =
     artifact.rows.length > 0
       ? artifact.rows[0].findIndex((cell, index) => index > 0 && typeof cell === "number")
+      : -1;
+  const numericColumn =
+    possibleNumericColumn > 0 &&
+    artifact.rows.every((row) => {
+      const value = row[possibleNumericColumn];
+      return typeof value === "number" && Number.isFinite(value) && value >= 0;
+    })
+      ? possibleNumericColumn
       : -1;
   const [view, setView] = useState<"chart" | "result">(numericColumn > 0 ? "chart" : "result");
   const chartRows = numericColumn > 0 ? artifact.rows.slice(0, 20) : [];
