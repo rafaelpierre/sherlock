@@ -40,3 +40,32 @@ class QueryResponse(BaseModel):
     result: QueryData
     attempts: int
     cached_sql: bool
+
+
+class RuleGenerateRequest(BaseModel):
+    """A natural-language instruction for a candidate fraud rule."""
+
+    instruction: str = Field(min_length=1, max_length=2_000)
+
+    @field_validator("instruction")
+    @classmethod
+    def instruction_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("instruction must not be blank")
+        return value
+
+
+class RuleValidationErrorResponse(BaseModel):
+    code: str
+    message: str
+    suggestion: str | None = None
+
+
+class RuleGenerateResponse(BaseModel):
+    """A generated, deterministically validated candidate rule."""
+
+    rule: str | None
+    valid: bool
+    repair_count: int = Field(ge=0, le=2)
+    errors: list[RuleValidationErrorResponse]

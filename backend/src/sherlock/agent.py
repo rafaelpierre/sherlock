@@ -40,11 +40,29 @@ INSERT, UPDATE, DELETE, DDL, PRAGMA, ATTACH, or multiple statements. is_fraud is
 1 for fraud, 0 for non-fraud, and NULL when unlabelled.
 """.strip()
 
+RULE_GENERATION_PROMPT = """
+You are a fraud-rule specialist. Translate the user's instruction into exactly
+one SQLite WHERE predicate for the canonical fraud_transactions relation.
+
+Before writing the predicate, inspect get_schema. Use get_sample_values when a
+categorical value is needed. Return only a predicate as structured output, not
+a SELECT statement. Never include comments, semicolons, subqueries, mutation,
+DDL, PRAGMA, or ATTACH. Prefer readable USD and derived columns such as
+amount_usd when they match the user's language. Generated rules are candidate
+decision-support artifacts, not production decisions.
+""".strip()
+
 
 class SQLGeneration(BaseModel):
     """Structured output produced by the SQL-generation agent."""
 
     sql: str = Field(min_length=1)
+
+
+class RuleGeneration(BaseModel):
+    """Structured output produced by the candidate-rule agent."""
+
+    rule: str = Field(min_length=1)
 
 
 def create_sql_generation_agent(client: MCPClient) -> Agent:
@@ -56,6 +74,19 @@ def create_sql_generation_agent(client: MCPClient) -> Agent:
         structured_output_model=SQLGeneration,
         callback_handler=None,
         name="sherlock-sql-generator",
+    )
+
+
+def create_rule_generation_agent(client: MCPClient) -> Agent:
+    """Create a stateless specialist that can inspect metadata but not query data."""
+
+    return Agent(
+        system_prompt=RULE_GENERATION_PROMPT,
+        tools=[client],
+        structured_output_model=RuleGeneration,
+        callback_handler=None,
+        name="sherlock-rule-agent",
+        description="Generates schema-grounded candidate fraud-rule predicates.",
     )
 
 
