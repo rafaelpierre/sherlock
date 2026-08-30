@@ -82,8 +82,9 @@ class QueryExecutor(Protocol):
 class StrandsSQLGenerator:
     """Generate SQL with isolated Strands agents and cache initial translations."""
 
-    def __init__(self, client: MCPClient) -> None:
+    def __init__(self, client: MCPClient, *, model: str | None = None) -> None:
         self._client = client
+        self._model = model
         self._generate_cached = lru_cache(maxsize=256)(self._generate_uncached)
 
     async def generate(self, question: str) -> tuple[str, bool]:
@@ -110,7 +111,7 @@ class StrandsSQLGenerator:
         return self._invoke_agent(question)
 
     def _invoke_agent(self, prompt: str) -> str:
-        agent = create_sql_generation_agent(self._client)
+        agent = create_sql_generation_agent(self._client, model=self._model)
         try:
             result = agent(prompt)
             output = result.structured_output
@@ -230,7 +231,9 @@ class Text2SQLService:
             self._close_callback()
 
 
-def create_text2sql_service(settings: Settings) -> Text2SQLService:
+def create_text2sql_service(
+    settings: Settings, *, model: str | None = None
+) -> Text2SQLService:
     """Build the production Text2SQL service and its shared MCP connection."""
 
     clients = MCPClient.load_servers(
@@ -253,7 +256,7 @@ def create_text2sql_service(settings: Settings) -> Text2SQLService:
         client.remove_consumer(owner)
 
     return Text2SQLService(
-        StrandsSQLGenerator(client),
+        StrandsSQLGenerator(client, model=model),
         MCPQueryExecutor(client),
         start_callback=client.load_tools,
         close_callback=close_client,

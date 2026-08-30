@@ -70,8 +70,9 @@ class RuleRefinementResult(RuleGenerationResult):
 class StrandsRuleGenerator:
     """Invoke a fresh schema-aware RuleAgent for every attempt."""
 
-    def __init__(self, client: MCPClient) -> None:
+    def __init__(self, client: MCPClient, *, model: str | None = None) -> None:
         self._client = client
+        self._model = model
 
     async def generate(self, instruction: str) -> str:
         return await asyncio.to_thread(self._invoke, instruction)
@@ -118,7 +119,7 @@ class StrandsRuleGenerator:
         return await asyncio.to_thread(self._invoke, prompt)
 
     def _invoke(self, prompt: str) -> str:
-        agent = create_rule_generation_agent(self._client)
+        agent = create_rule_generation_agent(self._client, model=self._model)
         try:
             result = agent(prompt)
             output = result.structured_output
@@ -217,7 +218,9 @@ class RuleGenerationService:
             self._close_callback()
 
 
-def create_rule_generation_service(settings: Settings) -> RuleGenerationService:
+def create_rule_generation_service(
+    settings: Settings, *, model: str | None = None
+) -> RuleGenerationService:
     """Build isolated metadata and execution clients for the RuleAgent workflow."""
 
     metadata_clients = MCPClient.load_servers(
@@ -261,7 +264,7 @@ def create_rule_generation_service(settings: Settings) -> RuleGenerationService:
         MCPSchemaProvider(execution_client), MCPQueryExecutor(execution_client)
     )
     return RuleGenerationService(
-        StrandsRuleGenerator(metadata_client),
+        StrandsRuleGenerator(metadata_client, model=model),
         validator,
         start_callback=start_clients,
         close_callback=close_clients,
