@@ -280,6 +280,10 @@ The gate recognizes the exact API login
   pass/fail result.
 - Fix every P0 and P1 finding, run the full applicable local checks, commit, and
   push.
+- Reply to each addressed review thread with the fixing commit and concise
+  verification evidence, then explicitly mark that GitHub thread resolved. A
+  new Codex review does not resolve older conversations automatically. Never
+  resolve a thread while its finding is still outstanding.
 - Any push changes the PR head SHA and invalidates the earlier review. Request a
   fresh `@codex review`, wait for completion on the new head, and rerun the gate
   if needed.
