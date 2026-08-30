@@ -14,6 +14,7 @@ from strands.tools.mcp import MCPClient
 from sherlock.services.text2sql import ExecutionResult, QueryExecutor
 
 CANONICAL_RELATION = "fraud_transactions"
+OUTCOME_ONLY_COLUMNS = frozenset({"is_fraud"})
 DISALLOWED_PREDICATE_NODES = (
     exp.Query,
     exp.DDL,
@@ -109,7 +110,9 @@ class RuleValidationService:
                 read="sqlite",
             )
         except ParseError as exc:
-            return self._invalid("INVALID_RULE_SYNTAX", f"Rule could not be parsed: {exc}")
+            return self._invalid(
+                "INVALID_RULE_SYNTAX", f"Rule could not be parsed: {exc}"
+            )
 
         where = statement.args.get("where")
         if not isinstance(statement, exp.Select) or not isinstance(where, exp.Where):
@@ -119,22 +122,32 @@ class RuleValidationService:
 
         predicate = where.this
         if any(
-            isinstance(node, DISALLOWED_PREDICATE_NODES)
-            for node in predicate.walk()
+            isinstance(node, DISALLOWED_PREDICATE_NODES) for node in predicate.walk()
         ):
             return self._invalid(
                 "INVALID_RULE_SCOPE",
                 "Queries and data-changing expressions are not allowed in rules.",
             )
 
-        allowed_columns = await self._schema.columns(CANONICAL_RELATION)
-        for column in predicate.find_all(exp.Column):
+        columns = list(predicate.find_all(exp.Column))
+        for column in columns:
             if column.table and column.table != CANONICAL_RELATION:
                 return self._invalid(
                     "UNKNOWN_RELATION",
                     f"Relation '{column.table}' is not available in rule scope.",
                     f"Use columns from {CANONICAL_RELATION} without another qualifier.",
                 )
+            if column.name.lower() in OUTCOME_ONLY_COLUMNS:
+                return self._invalid(
+                    "OUTCOME_COLUMN_FORBIDDEN",
+                    f"Column '{column.name}' is outcome-only and cannot be used "
+                    "in candidate rules.",
+                    "Use transaction attributes that are available when a decision "
+                    "is made.",
+                )
+
+        allowed_columns = await self._schema.columns(CANONICAL_RELATION)
+        for column in columns:
             if column.name not in allowed_columns:
                 return self._invalid(
                     "UNKNOWN_COLUMN",
