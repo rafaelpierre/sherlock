@@ -15,6 +15,25 @@ npm run dev
 Vite proxies `/v1` to `http://localhost:8080`, so start the backend locally on
 that port.
 
+## Docker
+
+The production-style image builds the static application with locked npm
+dependencies, serves it with Nginx, and proxies `/v1` to the Compose backend:
+
+```bash
+docker build -t sherlock-frontend .
+```
+
+The proxy target uses the Compose service name, so run the image through the
+root `docker-compose.yaml` rather than by itself:
+
+```bash
+docker compose up --build --wait
+```
+
+Open <http://localhost:3000>. Client-side routes fall back to `index.html`, and
+`GET /health` is used for container readiness.
+
 Successful chat responses are validated with the Zod schemas in
 `src/types.ts` before application state is updated. Those schemas are the
 frontend source for both runtime validation and inferred TypeScript types; they

@@ -176,6 +176,11 @@ docker run --rm -p 8000:8000 fraud-analytics-mcp
 The image prepares the bundled database during the build and the runtime loads
 it into a read-only in-memory snapshot.
 
+The repository-level `docker-compose.yaml` builds this same image, waits for
+`GET /health`, and makes the MCP endpoint available to the backend at
+`http://mcp:8000/mcp`. Start the complete stack from the repository root with
+`docker compose up --build --wait`.
+
 ## Network security
 
 The application does not enable authentication or TLS by default. Binding to

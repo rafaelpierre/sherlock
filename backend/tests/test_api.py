@@ -215,6 +215,16 @@ class InvalidStateChatAgentFactory:
         return InvalidStateChatAgent()
 
 
+def test_health_endpoint_reports_api_readiness() -> None:
+    app = create_app()
+
+    with TestClient(app) as client:
+        response = client.get("/v1/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_query_endpoint_returns_service_result() -> None:
     app = create_app()
     app.dependency_overrides[get_text2sql_service] = StubService

@@ -89,6 +89,13 @@ ChatAgentFactoryDependency = Annotated[
 ]
 
 
+@router.get("/health")
+async def health() -> dict[str, str]:
+    """Report API readiness without invoking analytical dependencies."""
+
+    return {"status": "ok"}
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query(
     request: QueryRequest,
