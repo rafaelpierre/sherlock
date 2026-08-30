@@ -17,6 +17,7 @@ describe("artifact rendering", () => {
     );
     expect(screen.queryByRole("tab", { name: /Chart/ })).not.toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "—" })).toBeInTheDocument();
+    expect(screen.getByRole("table").parentElement).not.toHaveClass("chart-sized-result");
     expect(screen.getByText("1 rows · limited")).toBeInTheDocument();
   });
 
@@ -52,6 +53,28 @@ describe("artifact rendering", () => {
     await user.click(screen.getByRole("tab", { name: "▦ Result" }));
     await user.click(screen.getByRole("tab", { name: "▥ Chart" }));
     expect(screen.getByLabelText("Chart of count")).toBeInTheDocument();
+  });
+
+  it("keeps a chart-backed result table at the chart panel height", async () => {
+    const user = userEvent.setup();
+    render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["name", "count"],
+          rows: [
+            ["A", 3],
+            ["B", 2],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "▦ Result" }));
+
+    expect(screen.getByRole("table").parentElement).toHaveClass("chart-sized-result");
   });
 
   it("does not chart signed values as positive bars", () => {

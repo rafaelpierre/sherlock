@@ -562,6 +562,10 @@ main.conversation {
   max-height: 440px;
   overflow: auto;
 }
+.chart-sized-result {
+  height: 380px;
+  max-height: 380px;
+}
 table {
   width: 100%;
   border-collapse: collapse;
