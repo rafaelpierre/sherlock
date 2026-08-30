@@ -32,6 +32,7 @@ describe("Sherlock application", () => {
     expect(
       screen.getByText("Find suspicious partners", { selector: ".activity-prompt" }),
     ).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({ messages: [] });
 
     await act(async () => resolveRequest(jsonResponse(chatResponse)));
     expect(await screen.findByRole("heading", { name: "Accounts linked" })).toBeInTheDocument();
@@ -110,6 +111,25 @@ describe("Sherlock application", () => {
     expect(
       screen.getByRole("heading", { name: /what would you like to uncover/i }),
     ).toBeInTheDocument();
+  });
+
+  it("restores the title after an initial request fails", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ detail: "Temporary failure" }, { status: 500 }))
+      .mockResolvedValueOnce(jsonResponse({ ...chatResponse, artifacts: [] }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Failed question{enter}");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Temporary failure");
+    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Successful question{enter}");
+
+    expect(await screen.findByRole("heading", { name: "Successful question" })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      title: "Successful question",
+    });
   });
 
   it("discards an in-flight response when starting a new investigation", async () => {

@@ -93,6 +93,25 @@ describe("artifact rendering", () => {
     expect(bars[1]).toHaveStyle({ height: "50%" });
   });
 
+  it("preserves small fractional values in chart labels", () => {
+    render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["card_type", "fraud_rate"],
+          rows: [
+            ["Debit", 0.0004],
+            ["Credit", 0.0002],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+    expect(screen.getByText("0.0004", { selector: ".bar-value" })).toBeInTheDocument();
+    expect(screen.getByText("0.0002", { selector: ".bar-value" })).toBeInTheDocument();
+  });
+
   it("renders an all-zero series with zero-height bars", () => {
     const { container } = render(
       <ArtifactView

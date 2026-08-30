@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Artifact, BacktestMetrics, BacktestResult } from "./types";
 
 const integer = new Intl.NumberFormat("en-US");
+const chartNumber = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 15 });
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -123,7 +124,7 @@ function TableArtifact({ artifact }: { artifact: Extract<Artifact, { type: "tabl
         <div className="bar-chart" aria-label={`Chart of ${artifact.columns[numericColumn]}`}>
           {chartRows.map((row, index) => (
             <div className="bar-column" key={index}>
-              <span className="bar-value">{integer.format(Number(row[numericColumn]))}</span>
+              <span className="bar-value">{chartNumber.format(Number(row[numericColumn]))}</span>
               <div
                 className="bar"
                 style={{

@@ -143,8 +143,8 @@ export default function App() {
   const empty = investigation.messages.length === 0;
 
   useEffect(() => {
-    saveInvestigation(investigation);
-  }, [investigation]);
+    if (!pending) saveInvestigation(investigation);
+  }, [investigation, pending]);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [investigation.messages, pending]);
@@ -193,7 +193,11 @@ export default function App() {
       }));
     } catch (reason) {
       if (requestId !== requestGeneration.current) return;
-      setInvestigation((current) => ({ ...current, messages: investigation.messages }));
+      setInvestigation((current) => ({
+        ...current,
+        title: investigation.title,
+        messages: investigation.messages,
+      }));
       setError(
         reason instanceof Error ? reason.message : "Sherlock encountered an unexpected error.",
       );
