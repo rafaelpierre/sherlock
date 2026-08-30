@@ -8,6 +8,7 @@ export interface ChatStreamHandlers {
 }
 
 const invalidResponse = "Sherlock returned an invalid response. Please try again.";
+const maxStreamActivities = 50;
 
 async function errorDetail(response: Response): Promise<string> {
   let detail = `Sherlock could not complete the request (${response.status}).`;
@@ -76,7 +77,9 @@ async function readEventStream(
         if (streamedTextLength > 10_000) throw new ChatApiError(invalidResponse);
       }
       if (event.type === "tool_call") {
-        if (activeCalls.has(event.id)) throw new ChatApiError(invalidResponse);
+        if (activeCalls.has(event.id) || activeCalls.size >= maxStreamActivities) {
+          throw new ChatApiError(invalidResponse);
+        }
         activeCalls.add(event.id);
       }
       if (event.type === "tool_result") {

@@ -147,6 +147,25 @@ describe("chat API", () => {
     );
   });
 
+  it("caps the number of streamed activities", async () => {
+    const activities = Array.from({ length: 51 }, (_, index) =>
+      [
+        event("tool_call", {
+          id: `call-${index}`,
+          kind: "tool_call",
+          name: "Text2SQL",
+          message: "Querying transactions",
+        }),
+        event("tool_result", { id: `call-${index}`, message: "Done" }),
+      ].join(""),
+    ).join("");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(eventStreamResponse([activities]));
+
+    await expect(sendChat("id", "question", [], {})).rejects.toEqual(
+      new ChatApiError("Sherlock returned an invalid response. Please try again."),
+    );
+  });
+
   it.each([
     [{ detail: "Plain detail" }, "Plain detail"],
     [{ message: "Top-level message" }, "Top-level message"],
