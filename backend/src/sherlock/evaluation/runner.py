@@ -84,6 +84,8 @@ def _contains_expected(actual: Any, expected: Any) -> bool:
                 for actual_item, expected_item in zip(actual, expected, strict=True)
             )
         )
+    if isinstance(actual, bool) or isinstance(expected, bool):
+        return type(actual) is type(expected) and actual == expected
     return actual == expected
 
 

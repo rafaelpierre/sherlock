@@ -115,3 +115,20 @@ def test_runner_handles_an_all_error_run() -> None:
 
     assert report.summary.repair_rate == 0
     assert report.summary.total_latency_ms == 0
+
+
+def test_runner_does_not_treat_booleans_as_numeric_oracle_matches() -> None:
+    suite = make_suite().model_copy(
+        update={
+            "cases": [
+                make_suite().cases[0].model_copy(update={"expected": {"valid": True}})
+            ]
+        }
+    )
+    service = FakeService({"passes": {"valid": 1}})
+
+    report = asyncio.run(
+        EvaluationRunner(service, clock=lambda: 1.0).run([suite], metadata())
+    )
+
+    assert report.results[0].status == "failed"
