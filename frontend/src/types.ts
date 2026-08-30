@@ -80,7 +80,7 @@ const storedBacktestSchema = z.strictObject({
   metrics: backtestMetricsSchema,
 });
 
-const workingStateSchema = z.strictObject({
+export const workingStateSchema = z.strictObject({
   candidate_rule: boundedStateText.nullable().optional(),
   previous_rule: boundedStateText.nullable().optional(),
   last_sql: boundedStateText.nullable().optional(),

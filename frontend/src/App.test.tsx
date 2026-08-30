@@ -1,8 +1,22 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { STORAGE_KEY } from "./store";
+import { STORAGE_KEY, STORAGE_VERSION } from "./store";
 import { chatResponse } from "./test/fixtures";
+
+const SAVED_CONVERSATION_ID = "3b621bd5-98dd-4be0-b713-89b1ac751fab";
+
+function storedInvestigation(
+  messages: { role: "user" | "assistant"; content: string }[],
+  workingState: Record<string, unknown> = {},
+) {
+  return {
+    version: STORAGE_VERSION,
+    conversation_id: SAVED_CONVERSATION_ID,
+    messages: messages.map(({ role, content }) => ({ role, content })),
+    working_state: workingState,
+  };
+}
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -36,7 +50,7 @@ describe("Sherlock application", () => {
     expect(
       screen.getByText("Find suspicious partners", { selector: ".activity-prompt" }),
     ).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({ messages: [] });
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
 
     await act(async () => resolveRequest(jsonResponse(chatResponse)));
     expect(await screen.findByRole("heading", { name: "Accounts linked" })).toBeInTheDocument();
@@ -58,8 +72,11 @@ describe("Sherlock application", () => {
       working_state: {},
     });
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
-      workingState: { candidate_rule: "amount_usd > 1000" },
+      version: STORAGE_VERSION,
+      conversation_id: expect.any(String),
+      working_state: { candidate_rule: "amount_usd > 1000" },
     });
+    expect(localStorage.getItem(STORAGE_KEY)).not.toContain("NovaTech");
   });
 
   it("submits a suggestion and supports result table and SQL interactions", async () => {
@@ -144,9 +161,11 @@ describe("Sherlock application", () => {
     });
     expect(await screen.findByRole("heading", { name: "Accounts linked" })).toBeInTheDocument();
     expect(screen.getByText("Analysis completed")).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
-      workingState: { candidate_rule: "amount_usd > 1000" },
-    });
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+        working_state: { candidate_rule: "amount_usd > 1000" },
+      }),
+    );
   });
 
   it("rolls back a partial assistant turn when the stream closes early", async () => {
@@ -181,18 +200,15 @@ describe("Sherlock application", () => {
   it("renders GitHub-flavored Markdown tables in assistant messages", () => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({
-        conversationId: "saved-id",
-        title: "Fraud transaction value",
-        messages: [
+      JSON.stringify(
+        storedInvestigation([
           {
             role: "assistant",
             content:
               "| Metric | Value |\n|---|---|\n| **Average Fraud Transaction Value** | **$85.59 USD** |",
           },
-        ],
-        workingState: {},
-      }),
+        ]),
+      ),
     );
 
     render(<App />);
@@ -244,10 +260,12 @@ describe("Sherlock application", () => {
     expect(alert).toHaveTextContent("Candidate state is missing.");
     await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(storedInvestigation([])));
     await user.click(screen.getByRole("button", { name: "New investigation" }));
     expect(
       screen.getByRole("heading", { name: /what would you like to uncover/i }),
     ).toBeInTheDocument();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
   it("restores the title after an initial request fails", async () => {
@@ -264,20 +282,20 @@ describe("Sherlock application", () => {
     await user.type(screen.getByLabelText("Ask Sherlock"), "Successful question{enter}");
 
     expect(await screen.findByRole("heading", { name: "Successful question" })).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
-      title: "Successful question",
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).messages[0]).toEqual({
+      role: "user",
+      content: "Successful question",
     });
   });
 
   it("rolls back a malformed success response and retries from the last valid state", async () => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({
-        conversationId: "saved-id",
-        title: "Existing investigation",
-        messages: [{ role: "assistant", content: "Existing answer" }],
-        workingState: { last_sql: "SELECT 1" },
-      }),
+      JSON.stringify(
+        storedInvestigation([{ role: "assistant", content: "Existing answer" }], {
+          last_sql: "SELECT 1",
+        }),
+      ),
     );
     const malformedResponse = {
       ...chatResponse,
@@ -341,10 +359,7 @@ describe("Sherlock application", () => {
       role: (index % 2 ? "assistant" : "user") as "user" | "assistant",
       content: `Bounded ${index}`,
     }));
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ conversationId: "saved-id", title: "Bounded", messages, workingState: {} }),
-    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(storedInvestigation(messages)));
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({ detail: "Temporary failure" }, { status: 500 }))
       .mockResolvedValueOnce(jsonResponse({ ...chatResponse, artifacts: [] }));
@@ -353,7 +368,7 @@ describe("Sherlock application", () => {
     await user.type(screen.getByLabelText("Ask Sherlock"), "Failed turn{enter}");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Temporary failure");
-    expect(screen.getByText("Bounded 0")).toBeInTheDocument();
+    expect(screen.getByText("Bounded 0", { selector: ".user-message p" })).toBeInTheDocument();
     expect(
       screen.queryByText("Failed turn", { selector: ".user-message p" }),
     ).not.toBeInTheDocument();
@@ -377,19 +392,14 @@ describe("Sherlock application", () => {
     }));
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({
-        conversationId: "saved-id",
-        title: "Original investigation",
-        messages,
-        workingState: { last_sql: "SELECT 1" },
-      }),
+      JSON.stringify(storedInvestigation(messages, { last_sql: "SELECT 1" })),
     );
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ ...chatResponse, artifacts: [] }),
     );
     const user = userEvent.setup();
     render(<App />);
-    expect(screen.getByRole("heading", { name: "Original investigation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Message 2" })).toBeInTheDocument();
     expect(screen.queryByText("Message 0")).not.toBeInTheDocument();
     expect(screen.getByText("Message 21")).toBeInTheDocument();
     await user.type(screen.getByLabelText("Ask Sherlock"), "Next{enter}");
