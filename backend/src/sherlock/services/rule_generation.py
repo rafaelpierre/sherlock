@@ -167,9 +167,7 @@ class RuleGenerationService:
         validation = await self._validator.validate(candidate)
         repair_count = 0
         while not validation.valid and repair_count < self._max_repair_attempts:
-            candidate = await self._generator.repair(
-                instruction, candidate, validation
-            )
+            candidate = await self._generator.repair(instruction, candidate, validation)
             repair_count += 1
             validation = await self._validator.validate(candidate)
 

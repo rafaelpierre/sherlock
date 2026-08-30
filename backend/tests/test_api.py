@@ -8,6 +8,11 @@ from sherlock.api.routes import (
     get_rule_generation_service,
     get_text2sql_service,
 )
+from sherlock.services.backtest import InvalidBacktestRule
+from sherlock.services.rule_validation import (
+    RuleValidationError,
+    RuleValidationResult,
+)
 
 
 class StubService:
@@ -70,6 +75,30 @@ class StubBacktestService:
                 "alerts_per_day": 2.0,
             },
         }
+
+
+class LabelLeakingBacktestService:
+    async def backtest(self, rule: str) -> dict[str, object]:
+        assert rule == "is_fraud = 1"
+        raise InvalidBacktestRule(
+            RuleValidationResult(
+                valid=False,
+                rule=None,
+                errors=[
+                    RuleValidationError(
+                        code="OUTCOME_COLUMN_FORBIDDEN",
+                        message=(
+                            "Column 'is_fraud' is outcome-only and cannot be used "
+                            "in candidate rules."
+                        ),
+                        suggestion=(
+                            "Use transaction attributes that are available when a "
+                            "decision is made."
+                        ),
+                    )
+                ],
+            )
+        )
 
 
 def test_query_endpoint_returns_service_result() -> None:
@@ -146,6 +175,20 @@ def test_backtest_endpoint_rejects_blank_rule() -> None:
         response = client.post("/v1/rules/backtest", json={"rule": " "})
 
     assert response.status_code == 422
+
+
+def test_backtest_endpoint_returns_structured_label_leakage_error() -> None:
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = LabelLeakingBacktestService
+
+    with TestClient(app) as client:
+        response = client.post("/v1/rules/backtest", json={"rule": "is_fraud = 1"})
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["valid"] is False
+    assert detail["rule"] is None
+    assert detail["errors"][0]["code"] == "OUTCOME_COLUMN_FORBIDDEN"
 
 
 def test_rule_refinement_endpoint_preserves_previous_rule() -> None:

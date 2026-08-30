@@ -109,6 +109,26 @@ def test_unknown_column_is_rejected() -> None:
     assert result.errors[0].suggestion
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "is_fraud = 1",
+        "amount_usd > 1000 AND is_fraud = 1",
+        "IS_FRAUD IS NULL OR card_type = 'Debit'",
+    ],
+)
+def test_outcome_columns_are_rejected_before_execution(rule: str) -> None:
+    executor = StubExecutor()
+
+    result = validate(rule, executor)
+
+    assert result.valid is False
+    assert result.rule is None
+    assert result.errors[0].code == "OUTCOME_COLUMN_FORBIDDEN"
+    assert result.errors[0].suggestion
+    assert executor.sql == []
+
+
 def test_execution_error_is_returned_structurally() -> None:
     result = validate(
         "amount_usd > 'not-a-number'",
