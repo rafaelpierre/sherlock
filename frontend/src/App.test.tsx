@@ -94,6 +94,31 @@ describe("Sherlock application", () => {
     ).toBeInTheDocument();
   });
 
+  it("discards an in-flight response when starting a new investigation", async () => {
+    const user = userEvent.setup();
+    let resolveRequest!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+    render(<App />);
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Old question{enter}");
+    expect(screen.getByRole("status")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "New investigation" }));
+    expect(
+      screen.getByRole("heading", { name: /what would you like to uncover/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Ask Sherlock")).not.toBeDisabled();
+    await act(async () => resolveRequest(jsonResponse(chatResponse)));
+    expect(screen.queryByText("I found a concentrated pattern.")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /what would you like to uncover/i }),
+    ).toBeInTheDocument();
+  });
+
   it("restores a saved investigation and sends bounded plain history", async () => {
     const messages = Array.from({ length: 22 }, (_, index) => ({
       role: (index % 2 ? "assistant" : "user") as "user" | "assistant",

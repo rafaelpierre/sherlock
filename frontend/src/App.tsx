@@ -137,6 +137,7 @@ export default function App() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const requestGeneration = useRef(0);
   const empty = investigation.messages.length === 0;
 
   useEffect(() => {
@@ -149,6 +150,7 @@ export default function App() {
   async function submit(value = input) {
     const message = value.trim();
     if (!message || pending) return;
+    const requestId = ++requestGeneration.current;
     const history = investigation.messages.map(({ role, content }) => ({ role, content }));
     setInput("");
     setError(null);
@@ -164,6 +166,7 @@ export default function App() {
         history,
         investigation.workingState,
       );
+      if (requestId !== requestGeneration.current) return;
       setInvestigation((current) => ({
         ...current,
         workingState: response.working_state,
@@ -178,18 +181,21 @@ export default function App() {
         ].slice(-20),
       }));
     } catch (reason) {
+      if (requestId !== requestGeneration.current) return;
       setError(
         reason instanceof Error ? reason.message : "Sherlock encountered an unexpected error.",
       );
     } finally {
-      setPending(false);
+      if (requestId === requestGeneration.current) setPending(false);
     }
   }
 
   function reset() {
+    requestGeneration.current += 1;
     setInvestigation(newInvestigation());
     setInput("");
     setError(null);
+    setPending(false);
   }
 
   return (
