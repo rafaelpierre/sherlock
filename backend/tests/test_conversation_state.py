@@ -131,15 +131,25 @@ def test_saved_backtest_accepts_expanded_normalized_rule() -> None:
 
     state = WorkingState.model_validate(
         {
+            "candidate_rule": normalized_rule,
+            "previous_rule": normalized_rule,
             "last_backtest": {
                 "rule": normalized_rule,
                 "metrics": EMPTY_METRICS,
-            }
+            },
         }
     )
 
     assert state.last_backtest is not None
+    assert state.candidate_rule == normalized_rule
+    assert state.previous_rule == normalized_rule
     assert state.last_backtest.rule == normalized_rule
+
+
+@pytest.mark.parametrize("field", ["candidate_rule", "previous_rule"])
+def test_working_state_rejects_unbounded_normalized_rule(field: str) -> None:
+    with pytest.raises(ValidationError):
+        WorkingState.model_validate({field: "x" * 20_001})
 
 
 @pytest.mark.parametrize(

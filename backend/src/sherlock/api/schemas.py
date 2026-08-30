@@ -173,8 +173,8 @@ class WorkingState(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    candidate_rule: str | None = Field(default=None, max_length=5_000)
-    previous_rule: str | None = Field(default=None, max_length=5_000)
+    candidate_rule: str | None = Field(default=None, max_length=20_000)
+    previous_rule: str | None = Field(default=None, max_length=20_000)
     last_sql: str | None = Field(default=None, max_length=20_000)
     last_backtest: StoredBacktest | None = None
 
