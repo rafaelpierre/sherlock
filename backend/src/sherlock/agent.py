@@ -67,10 +67,13 @@ class RuleGeneration(BaseModel):
     rule: str = Field(min_length=1)
 
 
-def create_sql_generation_agent(client: MCPClient) -> Agent:
+def create_sql_generation_agent(
+    client: MCPClient, *, model: str | None = None
+) -> Agent:
     """Create an isolated agent that can inspect metadata but cannot execute SQL."""
 
     return Agent(
+        model=model,
         system_prompt=SQL_GENERATION_PROMPT,
         tools=[client],
         structured_output_model=SQLGeneration,
@@ -79,10 +82,13 @@ def create_sql_generation_agent(client: MCPClient) -> Agent:
     )
 
 
-def create_rule_generation_agent(client: MCPClient) -> Agent:
+def create_rule_generation_agent(
+    client: MCPClient, *, model: str | None = None
+) -> Agent:
     """Create a stateless specialist that can inspect metadata but not query data."""
 
     return Agent(
+        model=model,
         system_prompt=RULE_GENERATION_PROMPT,
         tools=[client],
         structured_output_model=RuleGeneration,

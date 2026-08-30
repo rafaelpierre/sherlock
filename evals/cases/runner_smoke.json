@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "name": "runner-smoke",
+  "description": "Deterministic offline smoke case for the shared evaluation runner.",
+  "kind": "text2sql",
+  "cases": [
+    {
+      "id": "count-transactions",
+      "prompt": "How many transactions are in the evaluation fixture?",
+      "expected": {
+        "question": "How many transactions are in the evaluation fixture?"
+      },
+      "fixture_response": {
+        "question": "How many transactions are in the evaluation fixture?",
+        "sql": "SELECT 3 AS transaction_count",
+        "result": {
+          "columns": ["transaction_count"],
+          "rows": [[3]],
+          "row_count": 1,
+          "truncated": false
+        },
+        "attempts": 1,
+        "cached_sql": false
+      }
+    }
+  ]
+}

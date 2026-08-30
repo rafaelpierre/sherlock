@@ -166,6 +166,21 @@ Keep credentials in the environment or a secret manager; do not commit bearer
 tokens in header configuration. For a public AWS endpoint, add authentication
 and TLS at the MCP service or reverse-proxy layer.
 
+## Run evaluations
+
+The shared evaluation runner defaults to committed deterministic responses, so
+ordinary development and CI do not call Bedrock or the network:
+
+```bash
+uv run sherlock-eval --suite runner-smoke
+```
+
+It writes a versioned machine-readable report to `../eval-results/report.json`
+and returns a nonzero status for case failures or configuration errors. Live
+model execution requires both `--live` and an explicit `--model`. See
+[`../evals/README.md`](../evals/README.md) for fixture and report schemas,
+reproducibility metadata, credentials, limitations, and exit codes.
+
 ## How Text2SQL works
 
 The API route only validates HTTP input and delegates to `Text2SQLService`. The

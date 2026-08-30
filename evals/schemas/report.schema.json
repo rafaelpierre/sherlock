@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "EvaluationCaseResult": {
+      "additionalProperties": false,
+      "description": "Machine-readable result for one executed case.",
+      "properties": {
+        "suite": {"title": "Suite", "type": "string"},
+        "case_id": {"title": "Case Id", "type": "string"},
+        "status": {
+          "enum": ["passed", "failed", "error"],
+          "title": "Status",
+          "type": "string"
+        },
+        "latency_ms": {
+          "minimum": 0,
+          "title": "Latency Ms",
+          "type": "number"
+        },
+        "repair_count": {
+          "minimum": 0,
+          "title": "Repair Count",
+          "type": "integer"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "additionalProperties": {"$ref": "#/$defs/JSONValue"},
+              "type": "object"
+            },
+            {"type": "null"}
+          ],
+          "default": null,
+          "title": "Output"
+        },
+        "error": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "suite",
+        "case_id",
+        "status",
+        "latency_ms",
+        "repair_count"
+      ],
+      "title": "EvaluationCaseResult",
+      "type": "object"
+    },
+    "EvaluationSummary": {
+      "additionalProperties": false,
+      "description": "Aggregate counts printed by the CLI and embedded in every report.",
+      "properties": {
+        "total": {"minimum": 0, "title": "Total", "type": "integer"},
+        "passed": {"minimum": 0, "title": "Passed", "type": "integer"},
+        "failed": {"minimum": 0, "title": "Failed", "type": "integer"},
+        "errors": {"minimum": 0, "title": "Errors", "type": "integer"},
+        "total_latency_ms": {
+          "minimum": 0,
+          "title": "Total Latency Ms",
+          "type": "number"
+        },
+        "repair_count": {
+          "minimum": 0,
+          "title": "Repair Count",
+          "type": "integer"
+        },
+        "repair_rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Repair Rate",
+          "type": "number"
+        }
+      },
+      "required": [
+        "total",
+        "passed",
+        "failed",
+        "errors",
+        "total_latency_ms",
+        "repair_count",
+        "repair_rate"
+      ],
+      "title": "EvaluationSummary",
+      "type": "object"
+    },
+    "JSONValue": {
+      "anyOf": [
+        {"type": "string"},
+        {"type": "integer"},
+        {"type": "number"},
+        {"type": "boolean"},
+        {"items": {"$ref": "#/$defs/JSONValue"}, "type": "array"},
+        {
+          "additionalProperties": {"$ref": "#/$defs/JSONValue"},
+          "type": "object"
+        },
+        {"type": "null"}
+      ]
+    },
+    "RunMetadata": {
+      "additionalProperties": false,
+      "description": "Context required to interpret and reproduce an evaluation run.",
+      "properties": {
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "model": {"minLength": 1, "title": "Model", "type": "string"},
+        "configuration": {
+          "additionalProperties": {"$ref": "#/$defs/JSONValue"},
+          "title": "Configuration",
+          "type": "object"
+        },
+        "dataset_revision": {
+          "minLength": 1,
+          "title": "Dataset Revision",
+          "type": "string"
+        },
+        "mode": {
+          "enum": ["fixture", "live"],
+          "title": "Mode",
+          "type": "string"
+        },
+        "selected_suites": {
+          "items": {"type": "string"},
+          "minItems": 1,
+          "title": "Selected Suites",
+          "type": "array"
+        }
+      },
+      "required": [
+        "started_at",
+        "model",
+        "configuration",
+        "dataset_revision",
+        "mode",
+        "selected_suites"
+      ],
+      "title": "RunMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Stable top-level schema for persisted evaluation results.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "metadata": {"$ref": "#/$defs/RunMetadata"},
+    "results": {
+      "items": {"$ref": "#/$defs/EvaluationCaseResult"},
+      "title": "Results",
+      "type": "array"
+    },
+    "summary": {"$ref": "#/$defs/EvaluationSummary"}
+  },
+  "required": ["schema_version", "metadata", "results", "summary"],
+  "title": "EvaluationReport",
+  "type": "object"
+}
