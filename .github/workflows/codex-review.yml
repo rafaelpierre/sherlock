@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Require Codex review of current head
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;
@@ -44,7 +44,7 @@ jobs:
             );
             const shortSha = headSha.slice(0, 7);
             const completedSummary = comments.some((comment) =>
-              comment.user?.login === "chatgpt-codex-connector" &&
+              comment.user?.login === codexLogin &&
               comment.body?.includes("codex-pull-request-review-summary") &&
               comment.body?.includes("✅ **Completed**") &&
               comment.body?.includes(`\`${shortSha}\``)
