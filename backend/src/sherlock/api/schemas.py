@@ -71,6 +71,25 @@ class RuleGenerateResponse(BaseModel):
     errors: list[RuleValidationErrorResponse]
 
 
+class RuleRefineRequest(BaseModel):
+    """An explicit current rule and natural-language modification."""
+
+    rule: str = Field(min_length=1, max_length=5_000)
+    instruction: str = Field(min_length=1, max_length=2_000)
+
+    @field_validator("rule", "instruction")
+    @classmethod
+    def fields_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("rule and instruction must not be blank")
+        return value
+
+
+class RuleRefineResponse(RuleGenerateResponse):
+    previous_rule: str
+
+
 class RuleRequest(BaseModel):
     """A request containing one candidate fraud-rule predicate."""
 

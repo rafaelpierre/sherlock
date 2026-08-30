@@ -36,6 +36,16 @@ class StubRuleService:
             "errors": [],
         }
 
+    async def refine(self, rule: str, instruction: str) -> dict[str, object]:
+        assert instruction == "raise it to $1,500"
+        return {
+            "rule": "amount_usd > 1500 AND card_type = 'Debit'",
+            "previous_rule": rule,
+            "valid": True,
+            "repair_count": 0,
+            "errors": [],
+        }
+
 
 class StubBacktestService:
     async def backtest(self, rule: str) -> dict[str, object]:
@@ -134,5 +144,37 @@ def test_backtest_endpoint_rejects_blank_rule() -> None:
 
     with TestClient(app) as client:
         response = client.post("/v1/rules/backtest", json={"rule": " "})
+
+    assert response.status_code == 422
+
+
+def test_rule_refinement_endpoint_preserves_previous_rule() -> None:
+    app = create_app()
+    app.dependency_overrides[get_rule_generation_service] = StubRuleService
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/rules/refine",
+            json={
+                "rule": "amount_usd > 1000 AND card_type = 'Debit'",
+                "instruction": "raise it to $1,500",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["previous_rule"] == (
+        "amount_usd > 1000 AND card_type = 'Debit'"
+    )
+    assert response.json()["rule"].startswith("amount_usd > 1500")
+
+
+def test_rule_refinement_endpoint_rejects_blank_fields() -> None:
+    app = create_app()
+    app.dependency_overrides[get_rule_generation_service] = StubRuleService
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/rules/refine", json={"rule": " ", "instruction": "raise it"}
+        )
 
     assert response.status_code == 422
