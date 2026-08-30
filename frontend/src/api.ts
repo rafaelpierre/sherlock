@@ -9,6 +9,7 @@ export interface ChatStreamHandlers {
 
 const invalidResponse = "Sherlock returned an invalid response. Please try again.";
 const maxStreamActivities = 50;
+const maxPendingEventCharacters = 256_000;
 
 async function errorDetail(response: Response): Promise<string> {
   let detail = `Sherlock could not complete the request (${response.status}).`;
@@ -53,6 +54,7 @@ async function readEventStream(
   let buffer = "";
   let eventName = "";
   let dataLines: string[] = [];
+  let pendingDataLength = 0;
   let completed: ChatResponse | undefined;
   let reachedEof = false;
   let streamedTextLength = 0;
@@ -62,11 +64,13 @@ async function readEventStream(
   function dispatch() {
     if (dataLines.length === 0) {
       eventName = "";
+      pendingDataLength = 0;
       return;
     }
     const event = parseEvent(eventName || "message", dataLines.join("\n"));
     eventName = "";
     dataLines = [];
+    pendingDataLength = 0;
     if (completed) throw new ChatApiError(invalidResponse);
     if (event.type === "error") throw new ChatApiError(event.message);
     if (event.type === "complete") {
@@ -104,7 +108,11 @@ async function readEventStream(
     let fieldValue = separator === -1 ? "" : value.slice(separator + 1);
     if (fieldValue.startsWith(" ")) fieldValue = fieldValue.slice(1);
     if (field === "event") eventName = fieldValue;
-    if (field === "data") dataLines.push(fieldValue);
+    if (field === "data") {
+      pendingDataLength += fieldValue.length + 1;
+      if (pendingDataLength > maxPendingEventCharacters) throw new ChatApiError(invalidResponse);
+      dataLines.push(fieldValue);
+    }
   }
 
   try {
@@ -114,11 +122,13 @@ async function readEventStream(
       buffer += decoder.decode(value, { stream: !done });
       let newline = buffer.indexOf("\n");
       while (newline !== -1) {
+        if (newline > maxPendingEventCharacters) throw new ChatApiError(invalidResponse);
         const current = buffer.slice(0, newline).replace(/\r$/, "");
         buffer = buffer.slice(newline + 1);
         line(current);
         newline = buffer.indexOf("\n");
       }
+      if (buffer.length > maxPendingEventCharacters) throw new ChatApiError(invalidResponse);
       if (completed) return completed;
       if (done) break;
     }

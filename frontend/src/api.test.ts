@@ -168,6 +168,33 @@ describe("chat API", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["unterminated line", "x".repeat(256_001)],
+    [
+      "unterminated data fields",
+      `event: text_delta\n${Array.from({ length: 257 }, () => `data: ${"x".repeat(1_000)}\n`).join("")}`,
+    ],
+  ])("rejects and cancels an oversized %s", async (_label, payload) => {
+    const encoder = new TextEncoder();
+    const cancel = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(payload));
+          },
+          cancel,
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+
+    await expect(sendChat("id", "question", [], {})).rejects.toEqual(
+      new ChatApiError("Sherlock returned an invalid response. Please try again."),
+    );
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("caps the number of streamed activities", async () => {
     const activities = Array.from({ length: 51 }, (_, index) =>
       [
