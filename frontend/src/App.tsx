@@ -4,7 +4,12 @@ import remarkGfm from "remark-gfm";
 import { sendChat } from "./api";
 import { ArtifactView } from "./Artifacts";
 import { PaperclipIcon, PlusIcon, SendIcon, SparkIcon } from "./Icons";
-import { loadInvestigation, newInvestigation, saveInvestigation } from "./store";
+import {
+  clearInvestigation,
+  loadInvestigation,
+  newInvestigation,
+  saveInvestigation,
+} from "./store";
 import type { Investigation, StreamActivity, TranscriptMessage } from "./types";
 import "./styles.css";
 
@@ -199,10 +204,14 @@ export default function App() {
   const revealCompletedEvidence = useRef(false);
   const requestGeneration = useRef(0);
   const currentRequest = useRef<AbortController | null>(null);
+  const shouldPersist = useRef(false);
   const empty = investigation.messages.length === 0;
 
   useEffect(() => {
-    if (!pending) saveInvestigation(investigation);
+    if (!pending && shouldPersist.current) {
+      saveInvestigation(investigation);
+      shouldPersist.current = false;
+    }
   }, [investigation, pending]);
   useEffect(() => {
     if (revealCompletedEvidence.current) {
@@ -301,6 +310,7 @@ export default function App() {
           messages: messages.slice(-20),
         };
       });
+      shouldPersist.current = true;
     } catch (reason) {
       if (requestId !== requestGeneration.current) return;
       setInvestigation((current) => ({
@@ -329,6 +339,8 @@ export default function App() {
     setPending(false);
     setStreamStarted(false);
     revealCompletedEvidence.current = false;
+    shouldPersist.current = false;
+    clearInvestigation();
   }
 
   return (

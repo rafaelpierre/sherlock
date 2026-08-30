@@ -1,30 +1,106 @@
-import { loadInvestigation, newInvestigation, saveInvestigation, STORAGE_KEY } from "./store";
+import {
+  clearInvestigation,
+  loadInvestigation,
+  newInvestigation,
+  saveInvestigation,
+  STORAGE_KEY,
+  STORAGE_VERSION,
+} from "./store";
+import { metrics } from "./test/fixtures";
+
+const CONVERSATION_ID = "3b621bd5-98dd-4be0-b713-89b1ac751fab";
+
+function storedPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    version: STORAGE_VERSION,
+    conversation_id: CONVERSATION_ID,
+    messages: [],
+    working_state: {},
+    ...overrides,
+  };
+}
 
 describe("investigation persistence", () => {
-  it("creates and saves bounded investigations", () => {
+  it("writes a versioned, bounded allowlist while retaining authoritative working state", () => {
     const investigation = newInvestigation();
     expect(investigation.conversationId).toMatch(/00000000/);
+    investigation.title = "Runtime-only title";
+    investigation.workingState = {
+      candidate_rule: "amount_usd > 1000",
+      previous_rule: null,
+      last_sql: "SELECT amount_usd FROM fraud_transactions",
+      last_backtest: { rule: "amount_usd > 1000", metrics },
+    };
     investigation.messages = Array.from({ length: 25 }, (_, index) => ({
+      id: `message-${index}`,
       role: "user",
       content: String(index),
       artifacts: [
         { type: "table", columns: ["raw"], rows: [[index]], row_count: 1, truncated: false },
       ],
     }));
+
     saveInvestigation(investigation);
+
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
-    expect(stored.messages).toHaveLength(20);
-    expect(stored.messages[0]).not.toHaveProperty("artifacts");
-    expect(stored.messages[0].id).toBeTruthy();
+    expect(stored).toEqual({
+      version: STORAGE_VERSION,
+      conversation_id: investigation.conversationId,
+      messages: Array.from({ length: 20 }, (_, index) => ({
+        role: "user",
+        content: String(index + 5),
+      })),
+      working_state: investigation.workingState,
+    });
+    expect(JSON.stringify(stored)).not.toContain("raw");
+    expect(stored).not.toHaveProperty("title");
   });
 
-  it.each(["not json", JSON.stringify({ wrong: true })])(
-    "recovers from invalid storage",
-    (value) => {
-      localStorage.setItem(STORAGE_KEY, value);
-      expect(loadInvestigation().messages).toEqual([]);
-    },
-  );
+  it("restores the latest messages, derives the title, and retains working state", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(
+        storedPayload({
+          messages: Array.from({ length: 22 }, (_, index) => ({
+            role: index % 2 ? "assistant" : "user",
+            content: `Message ${index}`,
+          })),
+          working_state: { candidate_rule: "amount_usd > 1000" },
+        }),
+      ),
+    );
+
+    const restored = loadInvestigation();
+
+    expect(restored).toMatchObject({
+      conversationId: CONVERSATION_ID,
+      title: "Message 2",
+      workingState: { candidate_rule: "amount_usd > 1000" },
+    });
+    expect(restored.messages).toHaveLength(20);
+    expect(restored.messages[0]).toMatchObject({ role: "user", content: "Message 2" });
+    expect(restored.messages[0].id).toBeTruthy();
+  });
+
+  it.each([
+    ["malformed JSON", "not json"],
+    ["missing fields", JSON.stringify({ version: STORAGE_VERSION })],
+    ["an incompatible version", JSON.stringify(storedPayload({ version: 2 }))],
+    ["an incompatible shape", JSON.stringify(storedPayload({ unexpected: true }))],
+    [
+      "raw artifacts attached to a message",
+      JSON.stringify(
+        storedPayload({
+          messages: [{ role: "assistant", content: "Summary", artifacts: [{ rows: [[1]] }] }],
+        }),
+      ),
+    ],
+  ])("discards %s and recovers with an empty investigation", (_label, value) => {
+    localStorage.setItem(STORAGE_KEY, value);
+
+    expect(loadInvestigation()).toMatchObject({ messages: [], workingState: {} });
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
 
   it("falls back when browser storage cannot be read", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementationOnce(() => {
@@ -40,39 +116,10 @@ describe("investigation persistence", () => {
     expect(() => saveInvestigation(newInvestigation())).not.toThrow();
   });
 
-  it("uses an empty working state when an older save omits it", () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        conversationId: "id",
-        messages: [{ role: "user", content: "Legacy title" }],
-      }),
-    );
-    expect(loadInvestigation()).toMatchObject({
-      title: "Legacy title",
-      workingState: {},
+  it("continues when browser storage cannot be cleared", () => {
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementationOnce(() => {
+      throw new DOMException("Access denied", "SecurityError");
     });
-  });
-
-  it("strips artifact payloads from older persisted transcripts", () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        conversationId: "id",
-        messages: [
-          {
-            role: "assistant",
-            content: "Summary",
-            artifacts: [{ type: "table", rows: [["raw"]] }],
-          },
-        ],
-        workingState: {},
-      }),
-    );
-    expect(loadInvestigation().messages[0]).toMatchObject({
-      role: "assistant",
-      content: "Summary",
-    });
-    expect(loadInvestigation().messages[0].id).toBeTruthy();
+    expect(clearInvestigation).not.toThrow();
   });
 });
