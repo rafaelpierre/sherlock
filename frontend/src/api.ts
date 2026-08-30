@@ -54,6 +54,7 @@ async function readEventStream(
   let eventName = "";
   let dataLines: string[] = [];
   let completed: ChatResponse | undefined;
+  let reachedEof = false;
   let streamedTextLength = 0;
   const activeCalls = new Set<string>();
   const completedCalls = new Set<string>();
@@ -106,22 +107,28 @@ async function readEventStream(
     if (field === "data") dataLines.push(fieldValue);
   }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    let newline = buffer.indexOf("\n");
-    while (newline !== -1) {
-      const current = buffer.slice(0, newline).replace(/\r$/, "");
-      buffer = buffer.slice(newline + 1);
-      line(current);
-      newline = buffer.indexOf("\n");
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      reachedEof = done;
+      buffer += decoder.decode(value, { stream: !done });
+      let newline = buffer.indexOf("\n");
+      while (newline !== -1) {
+        const current = buffer.slice(0, newline).replace(/\r$/, "");
+        buffer = buffer.slice(newline + 1);
+        line(current);
+        newline = buffer.indexOf("\n");
+      }
+      if (completed) return completed;
+      if (done) break;
     }
-    if (done) break;
+    if (buffer) line(buffer.replace(/\r$/, ""));
+    dispatch();
+    if (!completed) throw new ChatApiError(invalidResponse);
+    return completed;
+  } finally {
+    if (!reachedEof) await reader.cancel().catch(() => undefined);
   }
-  if (buffer) line(buffer.replace(/\r$/, ""));
-  dispatch();
-  if (!completed) throw new ChatApiError(invalidResponse);
-  return completed;
 }
 
 export async function sendChat(

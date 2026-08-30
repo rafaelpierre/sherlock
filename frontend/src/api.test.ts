@@ -147,6 +147,27 @@ describe("chat API", () => {
     );
   });
 
+  it("cancels a non-closing response after a terminal stream event", async () => {
+    const encoder = new TextEncoder();
+    const cancel = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(event("error", { message: "Analysis timed out." })));
+          },
+          cancel,
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+
+    await expect(sendChat("id", "question", [], {})).rejects.toEqual(
+      new ChatApiError("Analysis timed out."),
+    );
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("caps the number of streamed activities", async () => {
     const activities = Array.from({ length: 51 }, (_, index) =>
       [
