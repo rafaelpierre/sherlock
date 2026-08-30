@@ -124,8 +124,8 @@ The committed baseline as of **2026-08-30** is:
 
 The [machine-readable report](evals/results/runner-smoke-2026-08-30.json)
 records the run date, runner configuration, dataset revision, per-case output,
-latency, and repair metadata. Reproduce it without AWS credentials or network
-access:
+latency, and repair metadata. After the one-time dependency installation, the
+evaluation itself runs without AWS credentials or network access:
 
 ```bash
 cd backend

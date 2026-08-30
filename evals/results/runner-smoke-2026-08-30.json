@@ -5,7 +5,7 @@
     "model": "deterministic-fixture-v1",
     "configuration": {
       "comparison": "recursive-subset-v1",
-      "fixture_directory": "evals/cases",
+      "fixture_directory": "/Users/rafaelpierre/projects/sherlock/evals/cases",
       "mcp_transport": "disabled",
       "runner_schema_version": 1
     },
