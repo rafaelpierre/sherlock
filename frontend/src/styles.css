@@ -595,7 +595,6 @@ tbody tr:hover {
 }
 .bar {
   width: min(38px, 85%);
-  min-height: 4px;
   border-radius: 4px 4px 0 0;
   background: linear-gradient(#769cf6, #557fe8);
   box-shadow: 0 4px 12px #5b82e62e;
