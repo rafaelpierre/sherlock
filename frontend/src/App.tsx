@@ -151,6 +151,12 @@ function Message({ message }: { message: TranscriptMessage }) {
       </div>
       <div className="assistant-content">
         <span className="message-label">Sherlock</span>
+        {message.activities?.map((activity) => (
+          <StreamActivityView activity={activity} key={activity.id} />
+        ))}
+        {message.artifacts?.map((artifact, index) => (
+          <ArtifactView artifact={artifact} key={`${artifact.type}-${index}`} />
+        ))}
         {message.content && (
           <div className="prose">
             <Markdown
@@ -167,12 +173,6 @@ function Message({ message }: { message: TranscriptMessage }) {
             </Markdown>
           </div>
         )}
-        {message.activities?.map((activity) => (
-          <StreamActivityView activity={activity} key={activity.id} />
-        ))}
-        {message.artifacts?.map((artifact, index) => (
-          <ArtifactView artifact={artifact} key={`${artifact.type}-${index}`} />
-        ))}
       </div>
     </article>
   );
