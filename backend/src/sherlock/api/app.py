@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from sherlock.api.routes import router
 from sherlock.config import Settings
+from sherlock.services.backtest import create_backtest_service
 from sherlock.services.rule_generation import create_rule_generation_service
 from sherlock.services.text2sql import create_text2sql_service
 
@@ -21,11 +22,14 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     settings = Settings.from_environment()
     text2sql_service = create_text2sql_service(settings)
     rule_generation_service = create_rule_generation_service(settings)
+    backtest_service = create_backtest_service(settings)
     application.state.text2sql_service = text2sql_service
     application.state.rule_generation_service = rule_generation_service
+    application.state.backtest_service = backtest_service
     try:
         yield
     finally:
+        backtest_service.close()
         rule_generation_service.close()
         text2sql_service.close()
 

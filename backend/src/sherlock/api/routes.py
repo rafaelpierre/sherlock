@@ -7,10 +7,17 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from sherlock.api.schemas import (
+    BacktestResponse,
     QueryRequest,
     QueryResponse,
     RuleGenerateRequest,
     RuleGenerateResponse,
+    RuleRequest,
+)
+from sherlock.services.backtest import (
+    BacktestError,
+    BacktestService,
+    InvalidBacktestRule,
 )
 from sherlock.services.rule_generation import RuleGenerationError, RuleGenerationService
 from sherlock.services.text2sql import Text2SQLError, Text2SQLService
@@ -36,6 +43,13 @@ def get_rule_generation_service(request: Request) -> RuleGenerationService:
 RuleGenerationDependency = Annotated[
     RuleGenerationService, Depends(get_rule_generation_service)
 ]
+
+
+def get_backtest_service(request: Request) -> BacktestService:
+    return request.app.state.backtest_service
+
+
+BacktestDependency = Annotated[BacktestService, Depends(get_backtest_service)]
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -70,3 +84,25 @@ async def generate_rule(
             detail=str(exc),
         ) from exc
     return RuleGenerateResponse.model_validate(result)
+
+
+@router.post("/rules/backtest", response_model=BacktestResponse)
+async def backtest_rule(
+    request: RuleRequest,
+    service: BacktestDependency,
+) -> BacktestResponse:
+    """Replay a candidate rule against historical transactions."""
+
+    try:
+        result = await service.backtest(request.rule)
+    except InvalidBacktestRule as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.validation.as_dict(),
+        ) from exc
+    except BacktestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return BacktestResponse.model_validate(result)
