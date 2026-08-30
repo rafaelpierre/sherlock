@@ -22,6 +22,9 @@ ChatIntent = Literal[
     "COMPARE_RULES",
 ]
 MAX_ASSISTANT_MESSAGE_LENGTH = 10_000
+MAX_STREAM_ACTIVITY_ID_LENGTH = 200
+MAX_STREAM_ACTIVITY_NAME_LENGTH = 200
+MAX_STREAM_ACTIVITY_MESSAGE_LENGTH = 2_000
 
 
 class ChatRequest(BaseModel):
@@ -80,3 +83,39 @@ class ChatStateErrorResponse(BaseModel):
     message: str
     intent: ChatIntent
     missing_fields: list[str]
+
+
+class ChatTextDelta(BaseModel):
+    """One bounded assistant-text addition in the public stream."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delta: str = Field(min_length=1, max_length=MAX_ASSISTANT_MESSAGE_LENGTH)
+
+
+class ChatToolCall(BaseModel):
+    """A product-facing activity without native model or tool details."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=MAX_STREAM_ACTIVITY_ID_LENGTH)
+    kind: Literal["tool_call", "agent_handoff"]
+    name: str = Field(min_length=1, max_length=MAX_STREAM_ACTIVITY_NAME_LENGTH)
+    message: str = Field(min_length=1, max_length=MAX_STREAM_ACTIVITY_MESSAGE_LENGTH)
+
+
+class ChatToolResult(BaseModel):
+    """A concise product-facing outcome paired with one activity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=MAX_STREAM_ACTIVITY_ID_LENGTH)
+    message: str = Field(min_length=1, max_length=MAX_STREAM_ACTIVITY_MESSAGE_LENGTH)
+
+
+class ChatStreamError(BaseModel):
+    """A bounded user-safe failure emitted after an SSE response starts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=MAX_STREAM_ACTIVITY_MESSAGE_LENGTH)

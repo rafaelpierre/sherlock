@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import threading
+from collections.abc import AsyncGenerator, AsyncIterator
+from typing import Any, cast
 
 import pytest
 from strands.types.content import Message
 
 from sherlock.api.artifacts import SQLArtifact
+from sherlock.api.chat_models import (
+    MAX_ASSISTANT_MESSAGE_LENGTH,
+    ChatResponse,
+    ChatTextDelta,
+    ChatToolCall,
+    ChatToolResult,
+)
 from sherlock.api.schemas import ConversationMessage, WorkingState
 from sherlock.chat import (
     ChatAgent,
     ChatAgentError,
     ChatAgentFactory,
+    ChatStreamItem,
     InvalidChatState,
     MissingChatState,
 )
@@ -144,6 +154,17 @@ class ScriptedModel:
             await self.tools[name](**arguments)
         return TextResult(self.response_text)
 
+    async def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]:
+        assert not cancel_signal.is_set()
+        result = await self.invoke_async(prompt)
+        midpoint = len(self.response_text) // 2
+        for delta in (self.response_text[:midpoint], self.response_text[midpoint:]):
+            if delta:
+                yield {"data": delta}
+        yield {"result": result}
+
     def cleanup(self) -> None:
         self.cleaned = True
 
@@ -181,6 +202,166 @@ def create_agent(
         state or WorkingState(),
         model_factory=model_factory,
     )
+
+
+async def collect_stream(agent: ChatAgent, message: str) -> list[ChatStreamItem]:
+    return [event async for event in agent.stream(message)]
+
+
+async def collect_stream_error(
+    agent: ChatAgent, message: str
+) -> tuple[list[ChatStreamItem], Exception | None]:
+    events: list[ChatStreamItem] = []
+    try:
+        async for event in agent.stream(message):
+            events.append(event)
+    except Exception as exc:  # noqa: BLE001 - test captures the stream boundary
+        return events, exc
+    return events, None
+
+
+def test_stream_translates_workflow_activity_and_text_without_raw_results() -> None:
+    workflows = StubWorkflows()
+    agent = create_agent(
+        workflows,
+        ScriptedModelFactory([("explore", {"question": "fraud rate"})]),
+    )
+
+    events = asyncio.run(collect_stream(agent, "What is the fraud rate?"))
+
+    assert [name for name, _ in events] == [
+        "tool_call",
+        "tool_result",
+        "text_delta",
+        "text_delta",
+        "complete",
+    ]
+    call = events[0][1]
+    result = events[1][1]
+    assert isinstance(call, ChatToolCall)
+    assert call.kind == "agent_handoff"
+    assert call.name == "Transaction analysis"
+    assert "explore" not in call.model_dump_json()
+    assert "fraud_transactions" not in call.model_dump_json()
+    assert isinstance(result, ChatToolResult)
+    assert result.id == call.id
+    assert "fraud_transactions" not in result.model_dump_json()
+    assert all(
+        isinstance(payload, ChatTextDelta)
+        for name, payload in events
+        if name == "text_delta"
+    )
+    complete = events[-1][1]
+    assert isinstance(complete, ChatResponse)
+    assert complete.artifacts[0].type == "sql"
+
+
+def test_stream_pairs_activity_before_reporting_missing_state() -> None:
+    agent = create_agent(
+        StubWorkflows(),
+        ScriptedModelFactory(
+            [("backtest_rule", {})],
+            response_text="BACKTEST_RULE requires candidate_rule and is_fraud details",
+        ),
+    )
+
+    events, error = asyncio.run(collect_stream_error(agent, "Backtest it"))
+
+    assert isinstance(error, MissingChatState)
+    assert [name for name, _ in events] == ["tool_call", "tool_result"]
+    call = events[0][1]
+    result = events[1][1]
+    assert isinstance(call, ChatToolCall)
+    assert isinstance(result, ChatToolResult)
+    assert result.id == call.id
+    assert result.message == "This activity could not be completed."
+
+
+def test_stream_rejects_excessive_cumulative_text() -> None:
+    agent = create_agent(
+        StubWorkflows(),
+        ScriptedModelFactory(
+            [("generate_rule", {"instruction": "high amount"})],
+            response_text="x" * (MAX_ASSISTANT_MESSAGE_LENGTH + 1),
+        ),
+    )
+
+    with pytest.raises(ChatAgentError, match="oversized"):
+        asyncio.run(collect_stream(agent, "Create a rule"))
+
+
+class BlockingStreamingModel(ScriptedModel):
+    cancel_signal: threading.Event | None = None
+
+    async def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]:
+        self.cancel_signal = cancel_signal
+        yield {"data": "Starting"}
+        await asyncio.Event().wait()
+
+
+class BlockingModelFactory:
+    def __init__(self) -> None:
+        self.model: BlockingStreamingModel | None = None
+
+    def __call__(
+        self, tools: list[Any], history: list[Message]
+    ) -> BlockingStreamingModel:
+        self.model = BlockingStreamingModel(tools, [], "unused")
+        return self.model
+
+
+def test_closing_stream_cancels_model_and_cleans_up() -> None:
+    workflows = StubWorkflows()
+    factory = BlockingModelFactory()
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        WorkingState(),
+        model_factory=factory,
+    )
+
+    async def consume_one_event() -> None:
+        stream = cast(
+            AsyncGenerator[ChatStreamItem],
+            agent.stream("Analyze transactions"),
+        )
+        assert (await anext(stream))[0] == "text_delta"
+        await stream.aclose()
+
+    asyncio.run(consume_one_event())
+
+    assert factory.model is not None
+    assert factory.model.cancel_signal is not None
+    assert factory.model.cancel_signal.is_set()
+    assert factory.model.cleaned is True
+
+
+class MalformedExploreWorkflows(StubWorkflows):
+    async def query(self, question: str) -> dict[str, Any]:
+        return {"question": question, "malformed": True}
+
+
+def test_unexpected_workflow_failure_finishes_started_activity() -> None:
+    agent = create_agent(
+        MalformedExploreWorkflows(),
+        ScriptedModelFactory([("explore", {"question": "fraud rate"})]),
+    )
+
+    events, error = asyncio.run(collect_stream_error(agent, "Analyze fraud rate"))
+
+    assert isinstance(error, ChatAgentError)
+    assert [name for name, _ in events] == ["tool_call", "tool_result"]
+    call = events[0][1]
+    result = events[1][1]
+    assert isinstance(call, ChatToolCall)
+    assert isinstance(result, ChatToolResult)
+    assert result.id == call.id
+    assert result.message == "This activity could not be completed."
 
 
 def test_explore_tool_reuses_text2sql_and_returns_sql_and_table_artifacts() -> None:

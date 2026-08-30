@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from sherlock.api.chat_models import ChatRequest, ChatResponse, ChatStateErrorResponse
+from sherlock.api.chat_models import (
+    ChatRequest,
+    ChatResponse,
+    ChatStateErrorResponse,
+    ChatStreamError,
+)
 from sherlock.api.schemas import (
     BacktestResponse,
     QueryRequest,
@@ -42,6 +51,32 @@ from sherlock.services.rule_generation import (
 from sherlock.services.text2sql import Text2SQLError, Text2SQLService
 
 router = APIRouter(prefix="/v1")
+
+
+def _media_range_quality(parameters: list[str]) -> float:
+    quality = next(
+        (
+            value
+            for name, _, value in (parameter.partition("=") for parameter in parameters)
+            if name == "q"
+        ),
+        "1",
+    )
+    try:
+        return float(quality)
+    except ValueError:
+        return 0.0
+
+
+def _accepts_event_stream(accept: str) -> bool:
+    media_ranges = [
+        [part.strip() for part in media_range.lower().split(";")]
+        for media_range in accept.split(",")
+    ]
+    return any(
+        media_type == "text/event-stream" and _media_range_quality(parameters) > 0
+        for media_type, *parameters in media_ranges
+    )
 
 
 def get_text2sql_service(request: Request) -> Text2SQLService:
@@ -116,11 +151,21 @@ async def query(
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    http_request: Request,
     factory: ChatAgentFactoryDependency,
-) -> ChatResponse:
+) -> ChatResponse | StreamingResponse:
     """Route one stateless conversational turn through a fresh ChatAgent."""
 
     agent = factory.create(request.history, request.working_state)
+    if _accepts_event_stream(http_request.headers.get("accept", "")):
+        return StreamingResponse(
+            _chat_event_stream(agent.stream(request.message)),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
     try:
         return await agent.respond(request.message)
     except MissingChatState as exc:
@@ -149,6 +194,48 @@ async def chat(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+
+
+def _sse(event: str, payload: BaseModel) -> str:
+    data = json.dumps(
+        payload.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"event: {event}\ndata: {data}\n\n"
+
+
+async def _chat_event_stream(
+    events: AsyncIterator[tuple[str, BaseModel]],
+) -> AsyncIterator[str]:
+    try:
+        async for event, payload in events:
+            yield _sse(event, payload)
+    except MissingChatState as exc:
+        if "candidate_rule" in exc.missing_fields:
+            message = "Create or select a candidate rule before running this activity."
+        else:
+            message = (
+                "A previous candidate rule is needed before Sherlock can compare rules."
+            )
+        yield _sse("error", ChatStreamError(message=message))
+    except InvalidChatState:
+        yield _sse(
+            "error",
+            ChatStreamError(
+                message=(
+                    "The saved candidate rule is no longer valid. "
+                    "Review or replace it before continuing."
+                )
+            ),
+        )
+    except ChatAgentError:
+        yield _sse(
+            "error",
+            ChatStreamError(
+                message="Sherlock could not complete the request. Please try again."
+            ),
+        )
 
 
 @router.post("/rules/generate", response_model=RuleGenerateResponse)
