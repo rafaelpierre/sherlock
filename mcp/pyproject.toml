@@ -27,6 +27,7 @@ module-name = "fraud_mcp"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.16.5",
     "ty>=0.0.75",
 ]

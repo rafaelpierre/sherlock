@@ -1,0 +1,31 @@
+name: MCP CI
+
+on:
+  pull_request:
+    paths:
+      - "mcp/**"
+      - ".github/workflows/mcp.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mcp/**"
+      - ".github/workflows/mcp.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked --dev
+      - run: uv run ruff check .
+      - run: uv run ty check
+      - run: uv run pytest --cov=fraud_mcp --cov=db --cov-report=term-missing --cov-fail-under=80
