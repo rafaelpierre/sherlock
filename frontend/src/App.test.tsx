@@ -76,6 +76,27 @@ describe("Sherlock application", () => {
     expect(screen.getByText(/SELECT partner/)).toBeVisible();
   });
 
+  it("renders analytical artifacts before the final prose summary", async () => {
+    const user = userEvent.setup();
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(chatResponse));
+    render(<App />);
+
+    await user.click(
+      screen.getByRole("button", { name: /Which card type has the highest fraud rate/ }),
+    );
+
+    const artifact = await screen.findByLabelText("Chart of accounts");
+    const summary = screen.getByRole("heading", { name: "Accounts linked" });
+    expect(
+      artifact.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await waitFor(() => {
+      expect(scrollSpy.mock.instances.at(-1)).toBe(artifact.closest(".artifacts"));
+      expect(scrollSpy).toHaveBeenLastCalledWith({ behavior: "smooth", block: "start" });
+    });
+  });
+
   it("renders streamed text and collapses completed tool activity", async () => {
     const user = userEvent.setup();
     let stream!: ReadableStreamDefaultController<Uint8Array>;
