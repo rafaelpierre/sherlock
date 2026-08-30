@@ -127,7 +127,16 @@ class BacktestMetricsResponse(BaseModel):
 
 
 class BacktestResponse(BaseModel):
-    rule: str = Field(min_length=1, max_length=5_000)
+    rule: str
+    metrics: BacktestMetricsResponse
+
+
+class StoredBacktest(BaseModel):
+    """Bounded backtest state safe for a client to send on later requests."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rule: str = Field(min_length=1, max_length=20_000)
     metrics: BacktestMetricsResponse
 
     @field_validator("rule")
@@ -167,7 +176,7 @@ class WorkingState(BaseModel):
     candidate_rule: str | None = Field(default=None, max_length=5_000)
     previous_rule: str | None = Field(default=None, max_length=5_000)
     last_sql: str | None = Field(default=None, max_length=20_000)
-    last_backtest: BacktestResponse | None = None
+    last_backtest: StoredBacktest | None = None
 
     @field_validator("candidate_rule", "previous_rule", "last_sql")
     @classmethod

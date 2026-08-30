@@ -13,6 +13,24 @@ from sherlock.api.schemas import (
 )
 
 CONVERSATION_ID = UUID("3b621bd5-98dd-4be0-b713-89b1ac751fab")
+EMPTY_METRICS = {
+    "population": 0,
+    "labelled_population": 0,
+    "fraud_total": 0,
+    "transactions_flagged": 0,
+    "unlabelled_flagged": 0,
+    "fraud_caught": 0,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "true_negatives": 0,
+    "precision": None,
+    "recall": None,
+    "false_positive_rate": None,
+    "fraud_value_total_usd": 0.0,
+    "fraud_value_captured_usd": 0.0,
+    "fraud_value_recall": None,
+    "alerts_per_day": None,
+}
 
 
 def test_empty_conversation_state_has_explicit_empty_working_state() -> None:
@@ -95,34 +113,33 @@ def test_conversation_state_round_trips_structured_referents() -> None:
     assert restored.working_state.last_backtest.metrics.unlabelled_flagged == 1
 
 
-@pytest.mark.parametrize("rule", [" ", "x" * 5_001])
+@pytest.mark.parametrize("rule", [" ", "x" * 20_001])
 def test_saved_backtest_rejects_unbounded_rule(rule: str) -> None:
     with pytest.raises(ValidationError):
         WorkingState.model_validate(
             {
                 "last_backtest": {
                     "rule": rule,
-                    "metrics": {
-                        "population": 0,
-                        "labelled_population": 0,
-                        "fraud_total": 0,
-                        "transactions_flagged": 0,
-                        "unlabelled_flagged": 0,
-                        "fraud_caught": 0,
-                        "false_positives": 0,
-                        "false_negatives": 0,
-                        "true_negatives": 0,
-                        "precision": None,
-                        "recall": None,
-                        "false_positive_rate": None,
-                        "fraud_value_total_usd": 0.0,
-                        "fraud_value_captured_usd": 0.0,
-                        "fraud_value_recall": None,
-                        "alerts_per_day": None,
-                    },
+                    "metrics": EMPTY_METRICS,
                 }
             }
         )
+
+
+def test_saved_backtest_accepts_expanded_normalized_rule() -> None:
+    normalized_rule = "amount_usd > 0 OR " * 400 + "amount_usd > 0"
+
+    state = WorkingState.model_validate(
+        {
+            "last_backtest": {
+                "rule": normalized_rule,
+                "metrics": EMPTY_METRICS,
+            }
+        }
+    )
+
+    assert state.last_backtest is not None
+    assert state.last_backtest.rule == normalized_rule
 
 
 @pytest.mark.parametrize(
