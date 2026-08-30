@@ -45,6 +45,14 @@ class RuleGenerator(Protocol):
 
     async def refine(self, rule: str, instruction: str) -> str: ...
 
+    async def repair_refinement(
+        self,
+        current_rule: str,
+        instruction: str,
+        previous_rule: str,
+        validation: RuleValidationResult,
+    ) -> str: ...
+
 
 @dataclass(frozen=True)
 class RuleGenerationResult:
@@ -88,6 +96,24 @@ class StrandsRuleGenerator:
             f"Refinement instruction:\n{instruction}\n\n"
             "Return the complete refined WHERE predicate. Preserve every unrelated "
             "condition and apply only the requested modification."
+        )
+        return await asyncio.to_thread(self._invoke, prompt)
+
+    async def repair_refinement(
+        self,
+        current_rule: str,
+        instruction: str,
+        previous_rule: str,
+        validation: RuleValidationResult,
+    ) -> str:
+        prompt = (
+            f"Current candidate rule:\n{current_rule}\n\n"
+            f"Refinement instruction:\n{instruction}\n\n"
+            f"Invalid refined rule:\n{previous_rule}\n\n"
+            f"Validation errors:\n{json.dumps(validation.as_dict(), sort_keys=True)}\n\n"
+            "Return a corrected complete WHERE predicate. Preserve every unrelated "
+            "condition from the current candidate rule and apply only the requested "
+            "modification."
         )
         return await asyncio.to_thread(self._invoke, prompt)
 
@@ -168,7 +194,12 @@ class RuleGenerationService:
         validation = await self._validator.validate(candidate)
         repair_count = 0
         while not validation.valid and repair_count < self._max_repair_attempts:
-            candidate = await self._generator.repair(instruction, candidate, validation)
+            candidate = await self._generator.repair_refinement(
+                current.rule,
+                instruction,
+                candidate,
+                validation,
+            )
             repair_count += 1
             validation = await self._validator.validate(candidate)
 
