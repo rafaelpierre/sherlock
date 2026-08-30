@@ -16,10 +16,12 @@ function Metric({
   label,
   value,
   change,
+  changeLabel,
 }: {
   label: string;
   value: string;
   change?: number | null;
+  changeLabel?: string;
 }) {
   return (
     <div className="metric">
@@ -27,8 +29,7 @@ function Metric({
       <strong>{value}</strong>
       {change !== undefined && change !== null && (
         <small className={change >= 0 ? "positive" : "negative"}>
-          {change >= 0 ? "+" : ""}
-          {change.toFixed(1)}
+          {changeLabel ?? `${change >= 0 ? "+" : ""}${change.toFixed(1)}`}
         </small>
       )}
     </div>
@@ -163,6 +164,9 @@ function ComparisonCard({
   artifact: Extract<Artifact, { type: "rule_comparison" }>;
 }) {
   const deltaPercent = (value: number | null) => (value === null ? null : value * 100);
+  const signed = (value: number, formatted: string) => `${value >= 0 ? "+" : ""}${formatted}`;
+  const precisionDelta = deltaPercent(artifact.delta.precision);
+  const recallDelta = deltaPercent(artifact.delta.recall);
   return (
     <section className="artifact-card comparison">
       <div className="artifact-heading">
@@ -183,27 +187,47 @@ function ComparisonCard({
         <Metric
           label="Precision"
           value={percent(artifact.current.metrics.precision)}
-          change={deltaPercent(artifact.delta.precision)}
+          change={precisionDelta}
+          changeLabel={
+            precisionDelta === null
+              ? undefined
+              : signed(precisionDelta, `${precisionDelta.toFixed(1)} pp`)
+          }
         />
         <Metric
           label="Recall"
           value={percent(artifact.current.metrics.recall)}
-          change={deltaPercent(artifact.delta.recall)}
+          change={recallDelta}
+          changeLabel={
+            recallDelta === null ? undefined : signed(recallDelta, `${recallDelta.toFixed(1)} pp`)
+          }
         />
         <Metric
           label="Flagged"
           value={integer.format(artifact.current.metrics.transactions_flagged)}
           change={artifact.delta.transactions_flagged}
+          changeLabel={signed(
+            artifact.delta.transactions_flagged,
+            integer.format(artifact.delta.transactions_flagged),
+          )}
         />
         <Metric
           label="Fraud caught"
           value={integer.format(artifact.current.metrics.fraud_caught)}
           change={artifact.delta.fraud_caught}
+          changeLabel={signed(
+            artifact.delta.fraud_caught,
+            integer.format(artifact.delta.fraud_caught),
+          )}
         />
         <Metric
           label="Value captured"
           value={money.format(artifact.current.metrics.fraud_value_captured_usd)}
           change={artifact.delta.fraud_value_captured_usd}
+          changeLabel={signed(
+            artifact.delta.fraud_value_captured_usd,
+            money.format(artifact.delta.fraud_value_captured_usd),
+          )}
         />
       </div>
       {(artifact.current.metrics.unlabelled_flagged > 0 ||

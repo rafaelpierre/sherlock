@@ -38,6 +38,8 @@ describe("Sherlock application", () => {
     expect(screen.getByText("Fraud hypothesis")).toBeInTheDocument();
     expect(screen.getByText("Historical replay")).toBeInTheDocument();
     expect(screen.getByText("Current vs previous")).toBeInTheDocument();
+    expect(screen.getByText("+16.6 pp")).toBeInTheDocument();
+    expect(screen.getByText("+$100")).toBeInTheDocument();
     expect(
       screen.getByText(/Alert volume includes 3 current and 3 previous unlabelled flagged/),
     ).toBeInTheDocument();
@@ -144,6 +146,7 @@ describe("Sherlock application", () => {
       STORAGE_KEY,
       JSON.stringify({
         conversationId: "saved-id",
+        title: "Original investigation",
         messages,
         workingState: { last_sql: "SELECT 1" },
       }),
@@ -153,6 +156,7 @@ describe("Sherlock application", () => {
     );
     const user = userEvent.setup();
     render(<App />);
+    expect(screen.getByRole("heading", { name: "Original investigation" })).toBeInTheDocument();
     expect(screen.queryByText("Message 0")).not.toBeInTheDocument();
     expect(screen.getByText("Message 21")).toBeInTheDocument();
     await user.type(screen.getByLabelText("Ask Sherlock"), "Next{enter}");

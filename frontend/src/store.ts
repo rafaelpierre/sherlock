@@ -14,6 +14,7 @@ export function loadInvestigation(): Investigation {
     if (!parsed.conversationId || !Array.isArray(parsed.messages)) return newInvestigation();
     return {
       ...parsed,
+      title: parsed.title ?? parsed.messages.find((message) => message.role === "user")?.content,
       messages: parsed.messages.slice(-20).map(({ id, role, content }) => ({
         id: id ?? crypto.randomUUID(),
         role,

@@ -76,6 +76,7 @@ export interface TranscriptMessage extends ConversationMessage {
 
 export interface Investigation {
   conversationId: string;
+  title?: string;
   messages: TranscriptMessage[];
   workingState: WorkingState;
 }

@@ -163,6 +163,7 @@ export default function App() {
     setPending(true);
     setInvestigation((current) => ({
       ...current,
+      title: current.title ?? message,
       messages: [...current.messages, { id: crypto.randomUUID(), role: "user", content: message }],
     }));
     try {
@@ -268,7 +269,7 @@ export default function App() {
           <>
             <div className="conversation-title">
               <span>Investigation</span>
-              <h1>{investigation.messages.find((message) => message.role === "user")?.content}</h1>
+              <h1>{investigation.title}</h1>
             </div>
             <section className="transcript">
               {investigation.messages.map((message) => (

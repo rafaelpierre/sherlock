@@ -27,8 +27,17 @@ describe("investigation persistence", () => {
   );
 
   it("uses an empty working state when an older save omits it", () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ conversationId: "id", messages: [] }));
-    expect(loadInvestigation().workingState).toEqual({});
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        conversationId: "id",
+        messages: [{ role: "user", content: "Legacy title" }],
+      }),
+    );
+    expect(loadInvestigation()).toMatchObject({
+      title: "Legacy title",
+      workingState: {},
+    });
   });
 
   it("strips artifact payloads from older persisted transcripts", () => {
