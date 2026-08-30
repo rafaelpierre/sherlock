@@ -131,6 +131,28 @@ class BacktestResponse(BaseModel):
     metrics: BacktestMetricsResponse
 
 
+class RuleComparisonDeltaResponse(BaseModel):
+    """Current-minus-previous changes for comparison headline metrics."""
+
+    model_config = ConfigDict(extra="forbid", ser_json_inf_nan="null")
+
+    precision: float | None
+    recall: float | None
+    transactions_flagged: int
+    fraud_caught: int
+    fraud_value_captured_usd: float
+
+
+class RuleComparisonResponse(BaseModel):
+    """Typed deterministic comparison consumed by API and artifact clients."""
+
+    model_config = ConfigDict(extra="forbid", ser_json_inf_nan="null")
+
+    current: BacktestResponse
+    previous: BacktestResponse
+    delta: RuleComparisonDeltaResponse
+
+
 class StoredBacktest(BaseModel):
     """Bounded backtest state safe for a client to send on later requests."""
 
