@@ -9,6 +9,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from sherlock.api.routes import router
+from sherlock.chat import ChatAgentFactory
 from sherlock.config import Settings
 from sherlock.services.backtest import create_backtest_service
 from sherlock.services.rule_comparison import RuleComparisonService
@@ -25,10 +26,17 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     rule_generation_service = create_rule_generation_service(settings)
     backtest_service = create_backtest_service(settings)
     rule_comparison_service = RuleComparisonService(backtest_service)
+    chat_agent_factory = ChatAgentFactory(
+        text2sql_service,
+        rule_generation_service,
+        backtest_service,
+        rule_comparison_service,
+    )
     application.state.text2sql_service = text2sql_service
     application.state.rule_generation_service = rule_generation_service
     application.state.backtest_service = backtest_service
     application.state.rule_comparison_service = rule_comparison_service
+    application.state.chat_agent_factory = chat_agent_factory
     try:
         yield
     finally:
@@ -41,7 +49,7 @@ def create_app() -> FastAPI:
     """Create the Sherlock HTTP application."""
 
     application = FastAPI(
-        title="Sherlock Text2SQL API",
+        title="Sherlock Fraud Analytics API",
         version="0.1.0",
         lifespan=lifespan,
     )

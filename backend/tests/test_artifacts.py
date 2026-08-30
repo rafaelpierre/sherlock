@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from sherlock.api.app import create_app
 from sherlock.api.artifacts import (
     Artifact,
     BacktestArtifact,
@@ -160,3 +161,21 @@ def test_artifact_union_generates_complete_openapi_components() -> None:
         "rule_comparison",
     }
     assert len(item_schema["oneOf"]) == 5
+
+
+def test_chat_openapi_response_exposes_artifact_discriminator() -> None:
+    schema = create_app().openapi()
+    response = schema["paths"]["/v1/chat"]["post"]["responses"]["200"]
+    response_schema = response["content"]["application/json"]["schema"]
+    chat_schema_name = response_schema["$ref"].rsplit("/", 1)[-1]
+    artifacts = schema["components"]["schemas"][chat_schema_name]["properties"][
+        "artifacts"
+    ]["items"]
+
+    assert set(artifacts["discriminator"]["mapping"]) == {
+        "sql",
+        "table",
+        "candidate_rule",
+        "backtest",
+        "rule_comparison",
+    }

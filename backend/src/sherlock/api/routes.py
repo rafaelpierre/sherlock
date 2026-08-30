@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from sherlock.api.chat_models import ChatRequest, ChatResponse, ChatStateErrorResponse
 from sherlock.api.schemas import (
     BacktestResponse,
     QueryRequest,
@@ -17,6 +18,12 @@ from sherlock.api.schemas import (
     RuleRefineRequest,
     RuleRefineResponse,
     RuleRequest,
+)
+from sherlock.chat import (
+    ChatAgentError,
+    ChatAgentFactory,
+    InvalidChatState,
+    MissingChatState,
 )
 from sherlock.services.backtest import (
     BacktestError,
@@ -73,6 +80,15 @@ RuleComparisonDependency = Annotated[
 ]
 
 
+def get_chat_agent_factory(request: Request) -> ChatAgentFactory:
+    return request.app.state.chat_agent_factory
+
+
+ChatAgentFactoryDependency = Annotated[
+    ChatAgentFactory, Depends(get_chat_agent_factory)
+]
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query(
     request: QueryRequest,
@@ -88,6 +104,44 @@ async def query(
             detail=str(exc),
         ) from exc
     return QueryResponse.model_validate(result)
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    request: ChatRequest,
+    factory: ChatAgentFactoryDependency,
+) -> ChatResponse:
+    """Route one stateless conversational turn through a fresh ChatAgent."""
+
+    agent = factory.create(request.history, request.working_state)
+    try:
+        return await agent.respond(request.message)
+    except MissingChatState as exc:
+        detail = ChatStateErrorResponse(
+            code="MISSING_WORKING_STATE",
+            message=str(exc),
+            intent=exc.intent,
+            missing_fields=exc.missing_fields,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=detail.model_dump(mode="json"),
+        ) from exc
+    except InvalidChatState as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "INVALID_WORKING_STATE",
+                "message": str(exc),
+                "intent": exc.intent,
+                **exc.detail,
+            },
+        ) from exc
+    except ChatAgentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
 
 
 @router.post("/rules/generate", response_model=RuleGenerateResponse)
