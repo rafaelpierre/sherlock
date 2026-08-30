@@ -34,7 +34,7 @@ services:
     volumes:
       - type: bind
         source: ${AWS_CONFIG_DIR:-~/.aws}
-        target: /home/app/.aws
+        target: /run/sherlock-aws
         read_only: true
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"

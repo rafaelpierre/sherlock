@@ -32,7 +32,8 @@ docker compose up --build --wait
 ```
 
 Open <http://localhost:3000>. Client-side routes fall back to `index.html`, and
-`GET /health` is used for container readiness.
+`GET /health` is used for container readiness. Proxied API requests allow up to
+five minutes for multi-step analytical turns to return a response.
 
 Successful chat responses are validated with the Zod schemas in
 `src/types.ts` before application state is updated. Those schemas are the

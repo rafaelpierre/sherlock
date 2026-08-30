@@ -104,13 +104,15 @@ docker build -t sherlock-backend .
 docker run --rm -p 8080:8080 \
   -e SHERLOCK_MCP_TRANSPORT=streamable-http \
   -e SHERLOCK_MCP_URL=http://host.docker.internal:8000/mcp \
-  -v ~/.aws:/home/app/.aws:ro \
+  -v ~/.aws:/run/sherlock-aws:ro \
   sherlock-backend
 ```
 
 For the supported full-stack workflow, run `docker compose up --build --wait`
 from the repository root. Compose waits for MCP readiness and supplies its
-private URL automatically. AWS credentials remain outside the image.
+private URL automatically. At startup, profile files are copied from the
+read-only mount into the container with permissions for the unprivileged app
+user; AWS credentials remain outside the image.
 
 ## Backend configuration
 
