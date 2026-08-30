@@ -53,6 +53,32 @@ from sherlock.services.text2sql import Text2SQLError, Text2SQLService
 router = APIRouter(prefix="/v1")
 
 
+def _media_range_quality(parameters: list[str]) -> float:
+    quality = next(
+        (
+            value
+            for name, _, value in (parameter.partition("=") for parameter in parameters)
+            if name == "q"
+        ),
+        "1",
+    )
+    try:
+        return float(quality)
+    except ValueError:
+        return 0.0
+
+
+def _accepts_event_stream(accept: str) -> bool:
+    media_ranges = [
+        [part.strip() for part in media_range.lower().split(";")]
+        for media_range in accept.split(",")
+    ]
+    return any(
+        media_type == "text/event-stream" and _media_range_quality(parameters) > 0
+        for media_type, *parameters in media_ranges
+    )
+
+
 def get_text2sql_service(request: Request) -> Text2SQLService:
     """Return the application-scoped Text2SQL service."""
 
@@ -131,7 +157,7 @@ async def chat(
     """Route one stateless conversational turn through a fresh ChatAgent."""
 
     agent = factory.create(request.history, request.working_state)
-    if "text/event-stream" in http_request.headers.get("accept", "").lower():
+    if _accepts_event_stream(http_request.headers.get("accept", "")):
         return StreamingResponse(
             _chat_event_stream(agent.stream(request.message)),
             media_type="text/event-stream",

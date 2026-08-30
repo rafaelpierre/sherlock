@@ -370,6 +370,26 @@ def test_chat_endpoint_streams_translated_events_and_authoritative_completion() 
     assert complete["working_state"]["candidate_rule"] == "amount_usd > 1000"
 
 
+def test_chat_endpoint_honors_explicit_event_stream_refusal() -> None:
+    app = create_app()
+    app.dependency_overrides[get_chat_agent_factory] = StubChatAgentFactory
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            headers={"Accept": "application/json, text/event-stream;q=0"},
+            json={
+                "conversation_id": "3b621bd5-98dd-4be0-b713-89b1ac751fab",
+                "message": "Create a high-value rule",
+                "working_state": {},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["artifacts"][0]["type"] == "candidate_rule"
+
+
 def test_chat_event_stream_returns_safe_error_after_paired_activity() -> None:
     app = create_app()
     app.dependency_overrides[get_chat_agent_factory] = MissingStateChatAgentFactory
