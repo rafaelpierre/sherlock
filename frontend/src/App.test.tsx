@@ -132,6 +132,45 @@ describe("Sherlock application", () => {
     });
   });
 
+  it("rolls back a malformed success response and retries from the last valid state", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        conversationId: "saved-id",
+        title: "Existing investigation",
+        messages: [{ role: "assistant", content: "Existing answer" }],
+        workingState: { last_sql: "SELECT 1" },
+      }),
+    );
+    const malformedResponse = {
+      ...chatResponse,
+      metadata: undefined,
+      working_state: { candidate_rule: "corrupted state" },
+    };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(malformedResponse))
+      .mockResolvedValueOnce(jsonResponse({ ...chatResponse, artifacts: [] }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Malformed turn{enter}");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Sherlock returned an invalid response");
+    expect(
+      screen.queryByText("Malformed turn", { selector: ".user-message p" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Existing answer")).toBeInTheDocument();
+
+    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Retry{enter}");
+    await screen.findByText("I found a concentrated pattern.");
+    const retryPayload = JSON.parse(
+      String((vi.mocked(fetch).mock.calls[1][1] as RequestInit).body),
+    );
+    expect(retryPayload.working_state).toEqual({ last_sql: "SELECT 1" });
+    expect(retryPayload.history).toEqual([{ role: "assistant", content: "Existing answer" }]);
+  });
+
   it("discards an in-flight response when starting a new investigation", async () => {
     const user = userEvent.setup();
     let resolveRequest!: (response: Response) => void;

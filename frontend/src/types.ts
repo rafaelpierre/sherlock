@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type Role = "user" | "assistant";
 
 export interface ConversationMessage {
@@ -5,68 +7,106 @@ export interface ConversationMessage {
   content: string;
 }
 
-export interface BacktestMetrics {
-  population: number;
-  labelled_population: number;
-  fraud_total: number;
-  transactions_flagged: number;
-  unlabelled_flagged: number;
-  fraud_caught: number;
-  false_positives: number;
-  false_negatives: number;
-  true_negatives: number;
-  precision: number | null;
-  recall: number | null;
-  false_positive_rate: number | null;
-  fraud_value_total_usd: number;
-  fraud_value_captured_usd: number;
-  fraud_value_recall: number | null;
-  alerts_per_day: number | null;
-}
+const nullableNumber = z.number().nullable();
 
-export interface BacktestResult {
-  rule: string;
-  metrics: BacktestMetrics;
-}
+const backtestMetricsSchema = z.strictObject({
+  population: z.number().int(),
+  labelled_population: z.number().int(),
+  fraud_total: z.number().int(),
+  transactions_flagged: z.number().int(),
+  unlabelled_flagged: z.number().int(),
+  fraud_caught: z.number().int(),
+  false_positives: z.number().int(),
+  false_negatives: z.number().int(),
+  true_negatives: z.number().int(),
+  precision: nullableNumber,
+  recall: nullableNumber,
+  false_positive_rate: nullableNumber,
+  fraud_value_total_usd: z.number(),
+  fraud_value_captured_usd: z.number(),
+  fraud_value_recall: nullableNumber,
+  alerts_per_day: nullableNumber,
+});
 
-export type Artifact =
-  | { type: "sql"; sql: string }
-  | { type: "table"; columns: string[]; rows: unknown[][]; row_count: number; truncated: boolean }
-  | {
-      type: "candidate_rule";
-      rule: string | null;
-      valid: boolean;
-      repair_count: number;
-      errors: Array<{ code: string; message: string; suggestion: string | null }>;
-    }
-  | ({ type: "backtest" } & BacktestResult)
-  | {
-      type: "rule_comparison";
-      current: BacktestResult;
-      previous: BacktestResult;
-      delta: Pick<
-        BacktestMetrics,
-        | "precision"
-        | "recall"
-        | "transactions_flagged"
-        | "fraud_caught"
-        | "fraud_value_captured_usd"
-      >;
-    };
+const backtestResultSchema = z.strictObject({
+  rule: z.string(),
+  metrics: backtestMetricsSchema,
+});
 
-export interface WorkingState {
-  candidate_rule?: string | null;
-  previous_rule?: string | null;
-  last_sql?: string | null;
-  last_backtest?: BacktestResult | null;
-}
+const artifactSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("sql"), sql: z.string().min(1) }),
+  z.strictObject({
+    type: z.literal("table"),
+    columns: z.array(z.string()),
+    rows: z.array(z.array(z.unknown())),
+    row_count: z.number().int(),
+    truncated: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal("candidate_rule"),
+    rule: z.string().nullable(),
+    valid: z.boolean(),
+    repair_count: z.number().int().min(0).max(2),
+    errors: z.array(
+      z.strictObject({
+        code: z.string(),
+        message: z.string(),
+        suggestion: z.string().nullable(),
+      }),
+    ),
+  }),
+  z.strictObject({ type: z.literal("backtest"), ...backtestResultSchema.shape }),
+  z.strictObject({
+    type: z.literal("rule_comparison"),
+    current: backtestResultSchema,
+    previous: backtestResultSchema,
+    delta: z.strictObject({
+      precision: nullableNumber,
+      recall: nullableNumber,
+      transactions_flagged: z.number().int(),
+      fraud_caught: z.number().int(),
+      fraud_value_captured_usd: z.number(),
+    }),
+  }),
+]);
 
-export interface ChatResponse {
-  message: string;
-  artifacts: Artifact[];
-  working_state: WorkingState;
-  metadata: { intent: string; repair_count: number; cache_hit: boolean };
-}
+const boundedStateText = z
+  .string()
+  .max(20_000)
+  .refine((value) => value.trim().length > 0);
+
+const storedBacktestSchema = z.strictObject({
+  rule: boundedStateText,
+  metrics: backtestMetricsSchema,
+});
+
+const workingStateSchema = z.strictObject({
+  candidate_rule: boundedStateText.nullable().optional(),
+  previous_rule: boundedStateText.nullable().optional(),
+  last_sql: boundedStateText.nullable().optional(),
+  last_backtest: storedBacktestSchema.nullable().optional(),
+});
+
+export const chatResponseSchema = z.strictObject({
+  message: z
+    .string()
+    .min(1)
+    .max(10_000)
+    .refine((value) => value.trim().length > 0),
+  artifacts: z.array(artifactSchema),
+  working_state: workingStateSchema,
+  metadata: z.strictObject({
+    intent: z.enum(["EXPLORE", "GENERATE_RULE", "REFINE_RULE", "BACKTEST_RULE", "COMPARE_RULES"]),
+    repair_count: z.number().int().min(0),
+    cache_hit: z.boolean(),
+  }),
+});
+
+export type BacktestMetrics = z.infer<typeof backtestMetricsSchema>;
+export type BacktestResult = z.infer<typeof backtestResultSchema>;
+export type Artifact = z.infer<typeof artifactSchema>;
+export type WorkingState = z.infer<typeof workingStateSchema>;
+export type ChatResponse = z.infer<typeof chatResponseSchema>;
 
 export interface TranscriptMessage extends ConversationMessage {
   id?: string;
