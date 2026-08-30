@@ -136,6 +136,7 @@ class _ChatExecution:
     routing_error: str | None = None
     event_sink: Callable[[ChatToolCall | ChatToolResult], None] | None = None
     activity_count: int = 0
+    active_activities: dict[str, str] = field(default_factory=dict)
 
     def select(self, intent: ChatIntent) -> bool:
         if self.intent is not None:
@@ -156,6 +157,7 @@ class _ChatExecution:
             return None
         self.activity_count += 1
         activity_id = f"activity-{self.activity_count}"
+        self.active_activities[activity_id] = tool_name
         kind, name, message, _ = _ACTIVITY_COPY[tool_name]
         self.event_sink(
             ChatToolCall(
@@ -172,12 +174,19 @@ class _ChatExecution:
     ) -> None:
         if self.event_sink is None or activity_id is None:
             return
+        active_tool_name = self.active_activities.pop(activity_id, None)
+        if active_tool_name is None:
+            return
         message = (
-            _ACTIVITY_COPY[tool_name][3]
+            _ACTIVITY_COPY[active_tool_name][3]
             if succeeded
             else "This activity could not be completed."
         )
         self.event_sink(ChatToolResult(id=activity_id, message=message))
+
+    def fail_active_activities(self) -> None:
+        for activity_id, tool_name in list(self.active_activities.items()):
+            self.finish_activity(tool_name, activity_id, succeeded=False)
 
     def allows_streamed_text(self) -> bool:
         return all(
@@ -375,6 +384,7 @@ class ChatAgent:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - cross-task error transport
+                self._execution.fail_active_activities()
                 queue.put_nowait(_stream_exception(exc))
             finally:
                 self._execution.event_sink = None

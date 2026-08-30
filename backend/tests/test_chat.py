@@ -341,6 +341,29 @@ def test_closing_stream_cancels_model_and_cleans_up() -> None:
     assert factory.model.cleaned is True
 
 
+class MalformedExploreWorkflows(StubWorkflows):
+    async def query(self, question: str) -> dict[str, Any]:
+        return {"question": question, "malformed": True}
+
+
+def test_unexpected_workflow_failure_finishes_started_activity() -> None:
+    agent = create_agent(
+        MalformedExploreWorkflows(),
+        ScriptedModelFactory([("explore", {"question": "fraud rate"})]),
+    )
+
+    events, error = asyncio.run(collect_stream_error(agent, "Analyze fraud rate"))
+
+    assert isinstance(error, ChatAgentError)
+    assert [name for name, _ in events] == ["tool_call", "tool_result"]
+    call = events[0][1]
+    result = events[1][1]
+    assert isinstance(call, ChatToolCall)
+    assert isinstance(result, ChatToolResult)
+    assert result.id == call.id
+    assert result.message == "This activity could not be completed."
+
+
 def test_explore_tool_reuses_text2sql_and_returns_sql_and_table_artifacts() -> None:
     workflows = StubWorkflows()
     model_factory = ScriptedModelFactory(
