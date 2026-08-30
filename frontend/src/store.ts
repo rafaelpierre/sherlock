@@ -7,9 +7,9 @@ export function newInvestigation(): Investigation {
 }
 
 export function loadInvestigation(): Investigation {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return newInvestigation();
   try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return newInvestigation();
     const parsed = JSON.parse(stored) as Investigation;
     if (!parsed.conversationId || !Array.isArray(parsed.messages)) return newInvestigation();
     return {
@@ -28,15 +28,19 @@ export function loadInvestigation(): Investigation {
 }
 
 export function saveInvestigation(investigation: Investigation): void {
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      ...investigation,
-      messages: investigation.messages.slice(-20).map(({ id, role, content }) => ({
-        id: id ?? crypto.randomUUID(),
-        role,
-        content,
-      })),
-    }),
-  );
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...investigation,
+        messages: investigation.messages.slice(-20).map(({ id, role, content }) => ({
+          id: id ?? crypto.randomUUID(),
+          role,
+          content,
+        })),
+      }),
+    );
+  } catch {
+    // Persistence is best-effort when browser storage is unavailable or full.
+  }
 }

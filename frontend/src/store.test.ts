@@ -26,6 +26,20 @@ describe("investigation persistence", () => {
     },
   );
 
+  it("falls back when browser storage cannot be read", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementationOnce(() => {
+      throw new DOMException("Access denied", "SecurityError");
+    });
+    expect(loadInvestigation()).toMatchObject({ messages: [], workingState: {} });
+  });
+
+  it("continues when browser storage cannot be written", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+    expect(() => saveInvestigation(newInvestigation())).not.toThrow();
+  });
+
   it("uses an empty working state when an older save omits it", () => {
     localStorage.setItem(
       STORAGE_KEY,
