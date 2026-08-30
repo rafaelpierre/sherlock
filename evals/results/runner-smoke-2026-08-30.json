@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "started_at": "2026-08-30T20:07:38.557687Z",
+    "model": "deterministic-fixture-v1",
+    "configuration": {
+      "comparison": "recursive-subset-v1",
+      "fixture_directory": "evals/cases",
+      "mcp_transport": "disabled",
+      "runner_schema_version": 1
+    },
+    "dataset_revision": "git-blob:2831beeb4444e6f32d6226dc0d872a4e9baf3bde",
+    "mode": "fixture",
+    "selected_suites": [
+      "runner-smoke"
+    ]
+  },
+  "results": [
+    {
+      "suite": "runner-smoke",
+      "case_id": "count-transactions",
+      "status": "passed",
+      "latency_ms": 0.011,
+      "repair_count": 0,
+      "output": {
+        "question": "How many transactions are in the evaluation fixture?",
+        "sql": "SELECT 3 AS transaction_count",
+        "result": {
+          "columns": [
+            "transaction_count"
+          ],
+          "rows": [
+            [
+              3
+            ]
+          ],
+          "row_count": 1,
+          "truncated": false
+        },
+        "attempts": 1,
+        "cached_sql": false
+      },
+      "error": null
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "total_latency_ms": 0.011,
+    "repair_count": 0,
+    "repair_rate": 0.0
+  }
+}
