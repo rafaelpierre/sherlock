@@ -1,5 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { sendChat } from "./api";
 import { ArtifactView } from "./Artifacts";
 import { PaperclipIcon, PlusIcon, SendIcon, SparkIcon } from "./Icons";
@@ -123,7 +124,18 @@ function Message({ message }: { message: TranscriptMessage }) {
       <div className="assistant-content">
         <span className="message-label">Sherlock</span>
         <div className="prose">
-          <Markdown>{message.content}</Markdown>
+          <Markdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              table: ({ children }) => (
+                <div className="table-scroll markdown-table">
+                  <table>{children}</table>
+                </div>
+              ),
+            }}
+          >
+            {message.content}
+          </Markdown>
         </div>
         {message.artifacts?.map((artifact, index) => (
           <ArtifactView artifact={artifact} key={`${artifact.type}-${index}`} />

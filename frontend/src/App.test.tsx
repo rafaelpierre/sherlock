@@ -72,6 +72,37 @@ describe("Sherlock application", () => {
     expect(screen.getByText(/SELECT partner/)).toBeVisible();
   });
 
+  it("renders GitHub-flavored Markdown tables in assistant messages", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        conversationId: "saved-id",
+        title: "Fraud transaction value",
+        messages: [
+          {
+            role: "assistant",
+            content:
+              "| Metric | Value |\n|---|---|\n| **Average Fraud Transaction Value** | **$85.59 USD** |",
+          },
+        ],
+        workingState: {},
+      }),
+    );
+
+    render(<App />);
+
+    const table = screen.getByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Metric" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Value" })).toBeInTheDocument();
+    const metric = within(table).getByRole("cell", {
+      name: "Average Fraud Transaction Value",
+    });
+    const value = within(table).getByRole("cell", { name: "$85.59 USD" });
+    expect(within(metric).getByText("Average Fraud Transaction Value").tagName).toBe("STRONG");
+    expect(within(value).getByText("$85.59 USD").tagName).toBe("STRONG");
+    expect(screen.queryByText("|---|---|")).not.toBeInTheDocument();
+  });
+
   it("keeps Shift+Enter as a newline and blocks blank submissions", async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
