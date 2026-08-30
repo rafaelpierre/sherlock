@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
+
 from fastapi.testclient import TestClient
 
 from sherlock.api.app import create_app
 from sherlock.api.artifacts import CandidateRuleArtifact
-from sherlock.api.chat_models import ChatMetadata, ChatResponse
+from sherlock.api.chat_models import (
+    ChatMetadata,
+    ChatResponse,
+    ChatTextDelta,
+    ChatToolCall,
+    ChatToolResult,
+)
 from sherlock.api.routes import (
     get_backtest_service,
     get_chat_agent_factory,
@@ -166,6 +175,26 @@ class StubChatAgent:
             metadata=ChatMetadata(intent="GENERATE_RULE"),
         )
 
+    async def stream(self, message: str) -> AsyncIterator[tuple[str, object]]:
+        response = await self.respond(message)
+        yield (
+            "tool_call",
+            ChatToolCall(
+                id="activity-1",
+                kind="tool_call",
+                name="Candidate rule",
+                message="Sherlock is drafting and validating a candidate rule.",
+            ),
+        )
+        yield (
+            "tool_result",
+            ChatToolResult(
+                id="activity-1", message="The candidate rule is ready for review."
+            ),
+        )
+        yield "text_delta", ChatTextDelta(delta=response.message)
+        yield "complete", response
+
 
 class StubChatAgentFactory:
     def __init__(self) -> None:
@@ -180,6 +209,24 @@ class StubChatAgentFactory:
 
 class MissingStateChatAgent:
     async def respond(self, message: str) -> ChatResponse:
+        raise MissingChatState("BACKTEST_RULE", ["candidate_rule"])
+
+    async def stream(self, message: str) -> AsyncIterator[tuple[str, object]]:
+        yield (
+            "tool_call",
+            ChatToolCall(
+                id="activity-1",
+                kind="tool_call",
+                name="Historical test",
+                message="Sherlock is replaying the candidate rule on historical transactions.",
+            ),
+        )
+        yield (
+            "tool_result",
+            ChatToolResult(
+                id="activity-1", message="The historical test could not start."
+            ),
+        )
         raise MissingChatState("BACKTEST_RULE", ["candidate_rule"])
 
 
@@ -206,6 +253,24 @@ class InvalidStateChatAgent:
                 ],
             },
         )
+
+    async def stream(self, message: str) -> AsyncIterator[tuple[str, object]]:
+        yield (
+            "tool_call",
+            ChatToolCall(
+                id="activity-1",
+                kind="tool_call",
+                name="Historical test",
+                message="Sherlock is replaying the candidate rule on historical transactions.",
+            ),
+        )
+        yield (
+            "tool_result",
+            ChatToolResult(
+                id="activity-1", message="This activity could not be completed."
+            ),
+        )
+        await self.respond(message)
 
 
 class InvalidStateChatAgentFactory:
@@ -266,6 +331,90 @@ def test_chat_endpoint_returns_artifacts_authoritative_state_and_metadata() -> N
     }
     assert len(factory.history) == 20
     assert factory.history[0].content == "message 3"
+
+
+def test_chat_endpoint_streams_translated_events_and_authoritative_completion() -> None:
+    app = create_app()
+    app.dependency_overrides[get_chat_agent_factory] = StubChatAgentFactory
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            headers={"Accept": "text/event-stream"},
+            json={
+                "conversation_id": "3b621bd5-98dd-4be0-b713-89b1ac751fab",
+                "message": "Create a high-value rule",
+                "working_state": {},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-cache"
+    blocks = response.text.strip().split("\n\n")
+    assert [block.splitlines()[0] for block in blocks] == [
+        "event: tool_call",
+        "event: tool_result",
+        "event: text_delta",
+        "event: complete",
+    ]
+    call = json.loads(blocks[0].splitlines()[1].removeprefix("data: "))
+    complete = json.loads(blocks[-1].splitlines()[1].removeprefix("data: "))
+    assert call == {
+        "id": "activity-1",
+        "kind": "tool_call",
+        "name": "Candidate rule",
+        "message": "Sherlock is drafting and validating a candidate rule.",
+    }
+    assert complete["artifacts"][0]["type"] == "candidate_rule"
+    assert complete["working_state"]["candidate_rule"] == "amount_usd > 1000"
+
+
+def test_chat_event_stream_returns_safe_error_after_paired_activity() -> None:
+    app = create_app()
+    app.dependency_overrides[get_chat_agent_factory] = MissingStateChatAgentFactory
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            headers={"Accept": "text/event-stream"},
+            json={
+                "conversation_id": "3b621bd5-98dd-4be0-b713-89b1ac751fab",
+                "message": "Backtest it",
+                "working_state": {},
+            },
+        )
+
+    assert [block.splitlines()[0] for block in response.text.strip().split("\n\n")] == [
+        "event: tool_call",
+        "event: tool_result",
+        "event: error",
+    ]
+    assert "Create or select a candidate rule" in response.text
+    assert "BACKTEST_RULE" not in response.text
+
+
+def test_chat_event_stream_hides_invalid_rule_details() -> None:
+    app = create_app()
+    app.dependency_overrides[get_chat_agent_factory] = InvalidStateChatAgentFactory
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            headers={"Accept": "text/event-stream"},
+            json={
+                "conversation_id": "3b621bd5-98dd-4be0-b713-89b1ac751fab",
+                "message": "Backtest it",
+                "working_state": {"candidate_rule": "is_fraud = 1"},
+            },
+        )
+
+    assert response.text.count("event: tool_call") == 1
+    assert response.text.count("event: tool_result") == 1
+    assert response.text.count("event: error") == 1
+    assert "saved candidate rule is no longer valid" in response.text
+    assert "is_fraud" not in response.text
+    assert "OUTCOME_COLUMN_FORBIDDEN" not in response.text
 
 
 def test_chat_endpoint_returns_structured_missing_state_error() -> None:

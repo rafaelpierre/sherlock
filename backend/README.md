@@ -53,6 +53,35 @@ exploration, candidate-rule generation and refinement, historical backtesting,
 and current-versus-previous rule comparison. State-dependent requests such as
 `Backtest it` return a structured `422` response when the required rule is absent.
 
+Clients that send `Accept: text/event-stream` receive named SSE events in this
+order:
+
+- `tool_call` starts a user-facing activity or specialist handoff;
+- `tool_result` finishes that activity using the same bounded activity ID;
+- `text_delta` appends assistant prose as it is generated;
+- `complete` supplies the authoritative `ChatResponse`; or
+- `error` supplies a bounded, user-safe message if the stream cannot complete.
+
+The backend translates native Strands lifecycle events into this stable product
+contract. Provider payloads, reasoning content, raw tool arguments, internal tool
+names, and raw tool results are never sent to the browser. Only `complete` should
+be used to commit artifacts, metadata, or replacement working state.
+
+```bash
+curl -N -X POST http://localhost:8080/v1/chat \
+  -H 'Accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "conversation_id":"3b621bd5-98dd-4be0-b713-89b1ac751fab",
+    "message":"Which card type has the highest fraud rate?",
+    "history":[],
+    "working_state":{}
+  }'
+```
+
+Clients that do not request SSE continue to receive the JSON response and HTTP
+error contract shown above.
+
 ## Run locally with stdio
 
 The default transport is stdio. The backend starts the sibling MCP project as a

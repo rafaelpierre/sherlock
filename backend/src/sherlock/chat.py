@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import threading
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from strands import Agent, tool
 from strands.types.content import Message
@@ -22,6 +24,9 @@ from sherlock.api.chat_models import (
     ChatIntent,
     ChatMetadata,
     ChatResponse,
+    ChatTextDelta,
+    ChatToolCall,
+    ChatToolResult,
 )
 from sherlock.api.schemas import (
     BacktestResponse,
@@ -64,6 +69,10 @@ hypotheses, not production fraud decisions.
 
 class ChatModel(Protocol):
     async def invoke_async(self, prompt: str) -> Any: ...
+
+    def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]: ...
 
     def cleanup(self) -> None: ...
 
@@ -125,6 +134,8 @@ class _ChatExecution:
     invalid_state: InvalidChatState | None = None
     service_error: Exception | None = None
     routing_error: str | None = None
+    event_sink: Callable[[ChatToolCall | ChatToolResult], None] | None = None
+    activity_count: int = 0
 
     def select(self, intent: ChatIntent) -> bool:
         if self.intent is not None:
@@ -139,6 +150,145 @@ class _ChatExecution:
             self.missing_state = MissingChatState(intent, missing)
             return False
         return True
+
+    def begin_activity(self, tool_name: str) -> str | None:
+        if self.event_sink is None:
+            return None
+        self.activity_count += 1
+        activity_id = f"activity-{self.activity_count}"
+        kind, name, message, _ = _ACTIVITY_COPY[tool_name]
+        self.event_sink(
+            ChatToolCall(
+                id=activity_id,
+                kind=kind,
+                name=name,
+                message=message,
+            )
+        )
+        return activity_id
+
+    def finish_activity(
+        self, tool_name: str, activity_id: str | None, *, succeeded: bool = True
+    ) -> None:
+        if self.event_sink is None or activity_id is None:
+            return
+        message = (
+            _ACTIVITY_COPY[tool_name][3]
+            if succeeded
+            else "This activity could not be completed."
+        )
+        self.event_sink(ChatToolResult(id=activity_id, message=message))
+
+    def allows_streamed_text(self) -> bool:
+        return all(
+            error is None
+            for error in (
+                self.missing_state,
+                self.invalid_state,
+                self.service_error,
+                self.routing_error,
+            )
+        )
+
+
+StreamEventName = Literal["text_delta", "tool_call", "tool_result", "complete"]
+ChatStreamItem = tuple[
+    StreamEventName,
+    ChatTextDelta | ChatToolCall | ChatToolResult | ChatResponse,
+]
+StreamQueueItem = (
+    ChatTextDelta | ChatToolCall | ChatToolResult | ChatResponse | Exception | None
+)
+
+_ACTIVITY_COPY: dict[
+    str, tuple[Literal["tool_call", "agent_handoff"], str, str, str]
+] = {
+    "explore": (
+        "agent_handoff",
+        "Transaction analysis",
+        "Sherlock's analysis specialist is investigating the transaction data.",
+        "Transaction analysis is ready.",
+    ),
+    "generate_rule": (
+        "tool_call",
+        "Candidate rule",
+        "Sherlock is drafting and validating a candidate rule.",
+        "The candidate rule is ready for review.",
+    ),
+    "refine_rule": (
+        "tool_call",
+        "Rule refinement",
+        "Sherlock is updating and validating the candidate rule.",
+        "The refined candidate rule is ready for review.",
+    ),
+    "backtest_rule": (
+        "tool_call",
+        "Historical test",
+        "Sherlock is replaying the candidate rule on historical transactions.",
+        "The historical test is complete.",
+    ),
+    "compare_rules": (
+        "tool_call",
+        "Rule comparison",
+        "Sherlock is comparing the current and previous candidate rules.",
+        "The rule comparison is ready.",
+    ),
+}
+
+
+async def _queue_events(
+    queue: asyncio.Queue[StreamQueueItem],
+) -> AsyncIterator[ChatTextDelta | ChatToolCall | ChatToolResult | ChatResponse]:
+    while True:
+        item = await queue.get()
+        if item is None:
+            return
+        if isinstance(item, Exception):
+            raise item
+        yield item
+
+
+def _stream_item(
+    item: ChatTextDelta | ChatToolCall | ChatToolResult | ChatResponse,
+) -> ChatStreamItem:
+    if isinstance(item, ChatTextDelta):
+        return "text_delta", item
+    if isinstance(item, ChatToolCall):
+        return "tool_call", item
+    if isinstance(item, ChatToolResult):
+        return "tool_result", item
+    return "complete", item
+
+
+async def _consume_native_stream(
+    model: ChatModel,
+    prompt: str,
+    cancel_signal: threading.Event,
+    queue: asyncio.Queue[StreamQueueItem],
+    allows_text: Callable[[], bool],
+) -> Any:
+    result: Any | None = None
+    streamed_text_length = 0
+    async for native_event in model.stream_async(prompt, cancel_signal=cancel_signal):
+        delta = native_event.get("data")
+        if isinstance(delta, str) and delta and allows_text():
+            streamed_text_length += len(delta)
+            if streamed_text_length > MAX_ASSISTANT_MESSAGE_LENGTH:
+                raise ChatAgentError(
+                    "The ChatAgent returned an oversized assistant message."
+                )
+            queue.put_nowait(ChatTextDelta(delta=delta))
+        if "result" in native_event:
+            result = native_event["result"]
+    if result is None:
+        raise ChatAgentError("The ChatAgent returned no result event.")
+    return result
+
+
+def _stream_exception(exc: Exception) -> Exception:
+    if isinstance(exc, (MissingChatState, InvalidChatState, ChatAgentError)):
+        return exc
+    return ChatAgentError("The ChatAgent invocation failed.")
 
 
 def _create_strands_model(tools: list[Any], history: list[Message]) -> ChatModel:
@@ -189,11 +339,7 @@ class ChatAgent:
 
     async def respond(self, message: str) -> ChatResponse:
         model = self._model_factory(self._tools(), _strands_history(self._history))
-        prompt = (
-            "Authoritative working state:\n"
-            f"{self._execution.working_state.model_dump_json()}\n\n"
-            f"User message:\n{message}"
-        )
+        prompt = self._prompt(message)
         try:
             try:
                 result = await model.invoke_async(prompt)
@@ -202,6 +348,59 @@ class ChatAgent:
         finally:
             model.cleanup()
 
+        return self._response(result)
+
+    async def stream(self, message: str) -> AsyncIterator[ChatStreamItem]:
+        """Yield translated public events while a fresh model invocation runs."""
+
+        model = self._model_factory(self._tools(), _strands_history(self._history))
+        queue: asyncio.Queue[StreamQueueItem] = asyncio.Queue()
+        cancel_signal = threading.Event()
+
+        def publish(event: ChatToolCall | ChatToolResult) -> None:
+            queue.put_nowait(event)
+
+        self._execution.event_sink = publish
+
+        async def produce() -> None:
+            try:
+                result = await _consume_native_stream(
+                    model,
+                    self._prompt(message),
+                    cancel_signal,
+                    queue,
+                    self._execution.allows_streamed_text,
+                )
+                queue.put_nowait(self._response(result))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - cross-task error transport
+                queue.put_nowait(_stream_exception(exc))
+            finally:
+                self._execution.event_sink = None
+                try:
+                    model.cleanup()
+                finally:
+                    queue.put_nowait(None)
+
+        producer = asyncio.create_task(produce())
+        try:
+            async for item in _queue_events(queue):
+                yield _stream_item(item)
+        finally:
+            cancel_signal.set()
+            if not producer.done():
+                producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+
+    def _prompt(self, message: str) -> str:
+        return (
+            "Authoritative working state:\n"
+            f"{self._execution.working_state.model_dump_json()}\n\n"
+            f"User message:\n{message}"
+        )
+
+    def _response(self, result: Any) -> ChatResponse:
         self._raise_errors()
         if self._execution.intent is None or not self._execution.artifacts:
             raise ChatAgentError(
@@ -252,12 +451,14 @@ class ChatAgent:
 
         if not self._execution.select("EXPLORE"):
             return {"error": self._execution.routing_error}
+        activity_id = self._execution.begin_activity("explore")
         try:
             response = QueryResponse.model_validate(
                 await self._text2sql_service.query(question)
             )
         except Text2SQLError as exc:
             self._execution.service_error = exc
+            self._execution.finish_activity("explore", activity_id, succeeded=False)
             return {"error": str(exc)}
         self._execution.artifacts.extend(
             [
@@ -268,6 +469,7 @@ class ChatAgent:
         self._execution.working_state.last_sql = response.sql
         self._execution.repair_count = response.attempts - 1
         self._execution.cache_hit = response.cached_sql
+        self._execution.finish_activity("explore", activity_id)
         return response.model_dump(mode="json")
 
     @tool(name="generate_rule")
@@ -276,12 +478,16 @@ class ChatAgent:
 
         if not self._execution.select("GENERATE_RULE"):
             return {"error": self._execution.routing_error}
+        activity_id = self._execution.begin_activity("generate_rule")
         try:
             response = RuleGenerateResponse.model_validate(
                 await self._rule_generation_service.generate(instruction)
             )
         except RuleGenerationError as exc:
             self._execution.service_error = exc
+            self._execution.finish_activity(
+                "generate_rule", activity_id, succeeded=False
+            )
             return {"error": str(exc)}
         self._execution.artifacts.append(
             CandidateRuleArtifact(type="candidate_rule", **response.model_dump())
@@ -291,6 +497,7 @@ class ChatAgent:
             self._execution.working_state.candidate_rule = response.rule
             self._execution.working_state.previous_rule = None
             self._execution.working_state.last_backtest = None
+        self._execution.finish_activity("generate_rule", activity_id)
         return response.model_dump(mode="json")
 
     @tool(name="refine_rule")
@@ -300,7 +507,9 @@ class ChatAgent:
         intent: ChatIntent = "REFINE_RULE"
         if not self._execution.select(intent):
             return {"error": self._execution.routing_error}
+        activity_id = self._execution.begin_activity("refine_rule")
         if not self._execution.require(intent, "candidate_rule"):
+            self._execution.finish_activity("refine_rule", activity_id, succeeded=False)
             return {"error": str(self._execution.missing_state)}
         current_rule = cast(str, self._execution.working_state.candidate_rule)
         try:
@@ -311,9 +520,11 @@ class ChatAgent:
             self._execution.invalid_state = InvalidChatState(
                 intent, exc.validation.as_dict()
             )
+            self._execution.finish_activity("refine_rule", activity_id, succeeded=False)
             return {"error": str(self._execution.invalid_state)}
         except RuleGenerationError as exc:
             self._execution.service_error = exc
+            self._execution.finish_activity("refine_rule", activity_id, succeeded=False)
             return {"error": str(exc)}
         self._execution.artifacts.append(
             CandidateRuleArtifact(
@@ -329,6 +540,7 @@ class ChatAgent:
             self._execution.working_state.previous_rule = response.previous_rule
             self._execution.working_state.candidate_rule = response.rule
             self._execution.working_state.last_backtest = None
+        self._execution.finish_activity("refine_rule", activity_id)
         return response.model_dump(mode="json")
 
     @tool(name="backtest_rule")
@@ -338,7 +550,11 @@ class ChatAgent:
         intent: ChatIntent = "BACKTEST_RULE"
         if not self._execution.select(intent):
             return {"error": self._execution.routing_error}
+        activity_id = self._execution.begin_activity("backtest_rule")
         if not self._execution.require(intent, "candidate_rule"):
+            self._execution.finish_activity(
+                "backtest_rule", activity_id, succeeded=False
+            )
             return {"error": str(self._execution.missing_state)}
         try:
             response = BacktestResponse.model_validate(
@@ -350,9 +566,15 @@ class ChatAgent:
             self._execution.invalid_state = InvalidChatState(
                 intent, exc.validation.as_dict()
             )
+            self._execution.finish_activity(
+                "backtest_rule", activity_id, succeeded=False
+            )
             return {"error": str(self._execution.invalid_state)}
         except BacktestError as exc:
             self._execution.service_error = exc
+            self._execution.finish_activity(
+                "backtest_rule", activity_id, succeeded=False
+            )
             return {"error": str(exc)}
         self._execution.artifacts.append(
             BacktestArtifact(type="backtest", **response.model_dump())
@@ -361,6 +583,7 @@ class ChatAgent:
         self._execution.working_state.last_backtest = StoredBacktest.model_validate(
             response.model_dump()
         )
+        self._execution.finish_activity("backtest_rule", activity_id)
         return response.model_dump(mode="json")
 
     @tool(name="compare_rules")
@@ -370,7 +593,11 @@ class ChatAgent:
         intent: ChatIntent = "COMPARE_RULES"
         if not self._execution.select(intent):
             return {"error": self._execution.routing_error}
+        activity_id = self._execution.begin_activity("compare_rules")
         if not self._execution.require(intent, "candidate_rule", "previous_rule"):
+            self._execution.finish_activity(
+                "compare_rules", activity_id, succeeded=False
+            )
             return {"error": str(self._execution.missing_state)}
         try:
             response = RuleComparisonResponse.model_validate(
@@ -384,15 +611,22 @@ class ChatAgent:
                 intent,
                 {"rule_role": exc.role, **exc.validation.as_dict()},
             )
+            self._execution.finish_activity(
+                "compare_rules", activity_id, succeeded=False
+            )
             return {"error": str(self._execution.invalid_state)}
         except BacktestError as exc:
             self._execution.service_error = exc
+            self._execution.finish_activity(
+                "compare_rules", activity_id, succeeded=False
+            )
             return {"error": str(exc)}
         self._execution.artifacts.append(
             RuleComparisonArtifact(type="rule_comparison", **response.model_dump())
         )
         self._execution.working_state.candidate_rule = response.current.rule
         self._execution.working_state.previous_rule = response.previous.rule
+        self._execution.finish_activity("compare_rules", activity_id)
         return response.model_dump(mode="json")
 
 
