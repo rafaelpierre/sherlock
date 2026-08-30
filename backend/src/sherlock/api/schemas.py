@@ -69,3 +69,43 @@ class RuleGenerateResponse(BaseModel):
     valid: bool
     repair_count: int = Field(ge=0, le=2)
     errors: list[RuleValidationErrorResponse]
+
+
+class RuleRequest(BaseModel):
+    """A request containing one candidate fraud-rule predicate."""
+
+    rule: str = Field(min_length=1, max_length=5_000)
+
+    @field_validator("rule")
+    @classmethod
+    def rule_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("rule must not be blank")
+        return value
+
+
+class BacktestMetricsResponse(BaseModel):
+    model_config = ConfigDict(ser_json_inf_nan="null")
+
+    population: int
+    labelled_population: int
+    fraud_total: int
+    transactions_flagged: int
+    unlabelled_flagged: int
+    fraud_caught: int
+    false_positives: int
+    false_negatives: int
+    true_negatives: int
+    precision: float | None
+    recall: float | None
+    false_positive_rate: float | None
+    fraud_value_total_usd: float
+    fraud_value_captured_usd: float
+    fraud_value_recall: float | None
+    alerts_per_day: float | None
+
+
+class BacktestResponse(BaseModel):
+    rule: str
+    metrics: BacktestMetricsResponse
