@@ -38,7 +38,19 @@ jobs:
               .sort((left, right) => left.id - right.id)
               .at(-1);
 
-            if (!currentReview) {
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: pull_number, per_page: 100 },
+            );
+            const shortSha = headSha.slice(0, 7);
+            const completedSummary = comments.some((comment) =>
+              comment.user?.login === "chatgpt-codex-connector" &&
+              comment.body?.includes("codex-pull-request-review-summary") &&
+              comment.body?.includes("✅ **Completed**") &&
+              comment.body?.includes(`\`${shortSha}\``)
+            );
+
+            if (!currentReview && !completedSummary) {
               core.setFailed(
                 "No Codex review exists for the current PR head. " +
                 "Comment '@codex review', wait for the review, and rerun this gate."
@@ -46,6 +58,4 @@ jobs:
               return;
             }
 
-            core.info(
-              `Codex review ${currentReview.id} covers ${headSha}.`
-            );
+            core.info(`Codex review completed for ${headSha}.`);
