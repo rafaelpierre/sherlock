@@ -193,6 +193,7 @@ export default function App() {
       }));
     } catch (reason) {
       if (requestId !== requestGeneration.current) return;
+      setInvestigation((current) => ({ ...current, messages: investigation.messages }));
       setError(
         reason instanceof Error ? reason.message : "Sherlock encountered an unexpected error.",
       );
@@ -256,7 +257,10 @@ export default function App() {
             />
             {error && (
               <div className="input-error" role="alert">
-                {error}
+                <span>{error}</span>
+                <button type="button" onClick={() => setError(null)}>
+                  Dismiss
+                </button>
               </div>
             )}
             <div className="suggestions">

@@ -137,7 +137,7 @@ describe("Sherlock application", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps failed user turns within the live history bound", async () => {
+  it("rolls failed turns out of bounded retry history", async () => {
     const messages = Array.from({ length: 20 }, (_, index) => ({
       id: `message-${index}`,
       role: (index % 2 ? "assistant" : "user") as "user" | "assistant",
@@ -147,15 +147,29 @@ describe("Sherlock application", () => {
       STORAGE_KEY,
       JSON.stringify({ conversationId: "saved-id", title: "Bounded", messages, workingState: {} }),
     );
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ detail: "Temporary failure" }, { status: 500 }),
-    );
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ detail: "Temporary failure" }, { status: 500 }))
+      .mockResolvedValueOnce(jsonResponse({ ...chatResponse, artifacts: [] }));
     const user = userEvent.setup();
     render(<App />);
     await user.type(screen.getByLabelText("Ask Sherlock"), "Failed turn{enter}");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Temporary failure");
-    expect(screen.queryByText("Bounded 0")).not.toBeInTheDocument();
-    expect(screen.getByText("Failed turn", { selector: ".user-message p" })).toBeInTheDocument();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Temporary failure");
+    expect(screen.getByText("Bounded 0")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Failed turn", { selector: ".user-message p" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Retry{enter}");
+    await screen.findByText("I found a concentrated pattern.");
+    const retryPayload = JSON.parse(
+      String((vi.mocked(fetch).mock.calls[1][1] as RequestInit).body),
+    );
+    expect(retryPayload.history).toHaveLength(20);
+    expect(retryPayload.history).not.toContainEqual(
+      expect.objectContaining({ content: "Failed turn" }),
+    );
   });
 
   it("restores a saved investigation and sends bounded plain history", async () => {

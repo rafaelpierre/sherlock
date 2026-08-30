@@ -315,6 +315,14 @@ main.empty {
   background: #fff2f4;
   font-size: 12px;
 }
+.input-error button {
+  margin-left: 12px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font-weight: 600;
+}
 main.conversation {
   padding-bottom: 140px;
 }
