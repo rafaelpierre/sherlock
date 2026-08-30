@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
+from unittest.mock import Mock
 
 import pytest
 
-from sherlock.services.rule_generation import InvalidCurrentRule, RuleGenerationService
+from sherlock.services.rule_generation import (
+    InvalidCurrentRule,
+    RuleGenerationService,
+    StrandsRuleGenerator,
+)
 from sherlock.services.rule_validation import (
     RuleValidationError,
     RuleValidationResult,
@@ -16,6 +21,7 @@ class StubGenerator:
     def __init__(self, rules: list[str]) -> None:
         self.rules: Iterator[str] = iter(rules)
         self.repairs: list[tuple[str, str]] = []
+        self.refinement_repairs: list[tuple[str, str, str]] = []
 
     async def generate(self, instruction: str) -> str:
         return next(self.rules)
@@ -30,6 +36,16 @@ class StubGenerator:
         return next(self.rules)
 
     async def refine(self, rule: str, instruction: str) -> str:
+        return next(self.rules)
+
+    async def repair_refinement(
+        self,
+        current_rule: str,
+        instruction: str,
+        previous_rule: str,
+        validation: RuleValidationResult,
+    ) -> str:
+        self.refinement_repairs.append((current_rule, instruction, previous_rule))
         return next(self.rules)
 
 
@@ -150,16 +166,69 @@ def test_refinement_preserves_previous_rule() -> None:
 
 
 def test_refinement_repairs_invalid_candidate() -> None:
-    generator = StubGenerator(["missing > 1", "amount_usd > 1500"])
+    generator = StubGenerator(
+        ["missing > 1", "missing > 2", "amount_usd > 1500 AND card_type = 'Debit'"]
+    )
     service = RuleGenerationService(
         generator,
         StubValidator(),
     )
 
-    result = asyncio.run(service.refine("amount_usd > 1000", "raise it"))
+    result = asyncio.run(
+        service.refine("amount_usd > 1000 AND card_type = 'Debit'", "raise it")
+    )
 
     assert result["valid"] is True
-    assert result["repair_count"] == 1
+    assert result["repair_count"] == 2
+    assert generator.refinement_repairs == [
+        (
+            "AMOUNT_USD > 1000 AND CARD_TYPE = 'DEBIT'",
+            "raise it",
+            "missing > 1",
+        ),
+        (
+            "AMOUNT_USD > 1000 AND CARD_TYPE = 'DEBIT'",
+            "raise it",
+            "missing > 2",
+        ),
+    ]
+    assert generator.repairs == []
+
+
+def test_refinement_repair_prompt_includes_complete_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts: list[str] = []
+    generator = StrandsRuleGenerator(Mock())
+    monkeypatch.setattr(
+        generator,
+        "_invoke",
+        lambda prompt: prompts.append(prompt) or "amount_usd > 1500",
+    )
+    validation = RuleValidationResult(
+        valid=False,
+        rule=None,
+        errors=[RuleValidationError("UNKNOWN_COLUMN", "Unknown column.")],
+    )
+
+    result = asyncio.run(
+        generator.repair_refinement(
+            "amount_usd > 1000 AND card_type = 'Debit'",
+            "raise it",
+            "missing > 1",
+            validation,
+        )
+    )
+
+    assert result == "amount_usd > 1500"
+    assert len(prompts) == 1
+    assert (
+        "Current candidate rule:\namount_usd > 1000 AND card_type = 'Debit'"
+        in prompts[0]
+    )
+    assert "Refinement instruction:\nraise it" in prompts[0]
+    assert "Invalid refined rule:\nmissing > 1" in prompts[0]
+    assert '"code": "UNKNOWN_COLUMN"' in prompts[0]
 
 
 def test_refinement_rejects_invalid_current_rule() -> None:
