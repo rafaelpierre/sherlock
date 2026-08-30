@@ -427,6 +427,10 @@ main.conversation {
   border-radius: 5px;
   background: #ebe5fa;
 }
+.prose .markdown-table {
+  max-height: none;
+  margin: 1em 0;
+}
 .artifact-card,
 .data-card,
 .sql-card {
