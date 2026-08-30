@@ -12,6 +12,7 @@ dependencies = [
     "botocore[crt]>=1.43.83",
     "fastapi>=0.116.0",
     "pydantic>=2.13.5",
+    "sqlglot>=30.17.0",
     "strands-agents>=1.54.0",
     "uvicorn>=0.35.0",
 ]
@@ -30,6 +31,7 @@ module-name = "sherlock"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.16.5",
 ]
 

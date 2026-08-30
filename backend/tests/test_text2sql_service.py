@@ -111,3 +111,35 @@ def test_nonrepairable_execution_error_is_not_retried() -> None:
         asyncio.run(service.query("How many transactions are there?"))
 
     assert generator.repairs == []
+
+
+def test_invalid_attempt_limit_is_rejected() -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        Text2SQLService(StubGenerator(), StubExecutor([]), max_attempts=0)
+
+
+def test_lifecycle_callbacks_run_once() -> None:
+    started = 0
+    closed = 0
+
+    async def start() -> None:
+        nonlocal started
+        started += 1
+
+    def close() -> None:
+        nonlocal closed
+        closed += 1
+
+    service = Text2SQLService(
+        StubGenerator(),
+        StubExecutor([successful_execution(), successful_execution()]),
+        start_callback=start,
+        close_callback=close,
+    )
+
+    asyncio.run(service.query("first"))
+    asyncio.run(service.query("second"))
+    service.close()
+
+    assert started == 1
+    assert closed == 1
