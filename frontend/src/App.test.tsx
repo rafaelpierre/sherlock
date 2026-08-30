@@ -78,6 +78,7 @@ describe("Sherlock application", () => {
 
   it("renders analytical artifacts before the final prose summary", async () => {
     const user = userEvent.setup();
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(chatResponse));
     render(<App />);
 
@@ -90,6 +91,10 @@ describe("Sherlock application", () => {
     expect(
       artifact.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    await waitFor(() => {
+      expect(scrollSpy.mock.instances.at(-1)).toBe(artifact.closest(".artifacts"));
+      expect(scrollSpy).toHaveBeenLastCalledWith({ behavior: "smooth", block: "start" });
+    });
   });
 
   it("renders streamed text and collapses completed tool activity", async () => {

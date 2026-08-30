@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState, type Ref } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sendChat } from "./api";
@@ -133,7 +133,13 @@ function StreamActivityView({ activity }: { activity: StreamActivity }) {
   );
 }
 
-function Message({ message }: { message: TranscriptMessage }) {
+function Message({
+  message,
+  evidenceRef,
+}: {
+  message: TranscriptMessage;
+  evidenceRef?: Ref<HTMLDivElement>;
+}) {
   if (message.role === "user")
     return (
       <article className="user-message">
@@ -154,9 +160,13 @@ function Message({ message }: { message: TranscriptMessage }) {
         {message.activities?.map((activity) => (
           <StreamActivityView activity={activity} key={activity.id} />
         ))}
-        {message.artifacts?.map((artifact, index) => (
-          <ArtifactView artifact={artifact} key={`${artifact.type}-${index}`} />
-        ))}
+        {message.artifacts && message.artifacts.length > 0 && (
+          <div className="artifacts" ref={evidenceRef}>
+            {message.artifacts.map((artifact, index) => (
+              <ArtifactView artifact={artifact} key={`${artifact.type}-${index}`} />
+            ))}
+          </div>
+        )}
         {message.content && (
           <div className="prose">
             <Markdown
@@ -185,6 +195,8 @@ export default function App() {
   const [streamStarted, setStreamStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const evidenceRef = useRef<HTMLDivElement>(null);
+  const revealCompletedEvidence = useRef(false);
   const requestGeneration = useRef(0);
   const currentRequest = useRef<AbortController | null>(null);
   const empty = investigation.messages.length === 0;
@@ -193,6 +205,13 @@ export default function App() {
     if (!pending) saveInvestigation(investigation);
   }, [investigation, pending]);
   useEffect(() => {
+    if (revealCompletedEvidence.current) {
+      if (!pending) {
+        evidenceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        revealCompletedEvidence.current = false;
+      }
+      return;
+    }
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [investigation.messages, pending]);
 
@@ -262,6 +281,7 @@ export default function App() {
         controller.signal,
       );
       if (requestId !== requestGeneration.current) return;
+      revealCompletedEvidence.current = response.artifacts.length > 0;
       setInvestigation((current) => {
         const draftIndex = current.messages.findIndex(({ id }) => id === draftId);
         const completed: TranscriptMessage = {
@@ -308,6 +328,7 @@ export default function App() {
     setError(null);
     setPending(false);
     setStreamStarted(false);
+    revealCompletedEvidence.current = false;
   }
 
   return (
@@ -379,8 +400,14 @@ export default function App() {
               <h1>{investigation.title}</h1>
             </div>
             <section className="transcript">
-              {investigation.messages.map((message) => (
-                <Message message={message} key={message.id} />
+              {investigation.messages.map((message, index) => (
+                <Message
+                  message={message}
+                  key={message.id}
+                  evidenceRef={
+                    index === investigation.messages.length - 1 ? evidenceRef : undefined
+                  }
+                />
               ))}
               {pending && !streamStarted && (
                 <Activity message={investigation.messages.at(-1)?.content ?? input} />
