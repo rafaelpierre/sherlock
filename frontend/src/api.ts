@@ -68,6 +68,7 @@ async function readEventStream(
     if (completed) throw new ChatApiError(invalidResponse);
     if (event.type === "error") throw new ChatApiError(event.message);
     if (event.type === "complete") {
+      if (activeCalls.size !== completedCalls.size) throw new ChatApiError(invalidResponse);
       completed = event.response;
     } else {
       if (event.type === "text_delta") {

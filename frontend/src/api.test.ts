@@ -122,6 +122,15 @@ describe("chat API", () => {
     ["contains malformed JSON", "event: text_delta\ndata: {broken}\n\n"],
     ["contains an unknown event", event("future_event", { value: true })],
     ["returns a result without a call", event("tool_result", { id: "missing", message: "Done" })],
+    [
+      "completes with an active call",
+      event("tool_call", {
+        id: "active",
+        kind: "tool_call",
+        name: "Text2SQL",
+        message: "Querying transactions",
+      }) + event("complete", chatResponse),
+    ],
   ])("rejects a stream that %s", async (_label, payload) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(eventStreamResponse([payload]));
     await expect(sendChat("id", "question", [], {})).rejects.toEqual(
