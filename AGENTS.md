@@ -1,38 +1,300 @@
 # Sherlock Repository Guidance
 
-## Pull Request Delivery Rules
+This file is the operating guide for contributors and coding agents working in
+this repository. Follow it for every change unless a more specific `AGENTS.md`
+exists below the files being changed.
 
-- Implement each backlog issue on its own `feature/<issue-number>-<slug>` branch.
-- Open a pull request into `main`, wait for all applicable CI checks, and request
-  a Codex review with `@codex review` unless an automatic review is already in
-  progress.
-- Do not merge until `chatgpt-codex-connector[bot]` has submitted a review for
-  the pull request's current head commit.
-- Resolve every Codex P0 or P1 finding before merging. After pushing a fix,
-  request and wait for a fresh review because reviews of older commits do not
-  satisfy the gate.
-- Squash-merge the pull request and delete its feature branch. Synchronize
-  `main` before creating the next feature branch.
-- GitHub branch protection is unavailable while this repository is private on
-  its current plan. Treat the `Codex Review Gate` check and these instructions
-  as mandatory even though GitHub cannot technically prevent an override.
+## Project Summary
 
-## Code Review Rules
+Sherlock is a decision-support application for fraud success managers. It turns
+natural-language questions into analytics, helps create candidate fraud rules,
+validates them, and replays them against historical transactions. Candidate
+rules are hypotheses for investigation; they are not production fraud
+decisions.
+
+The current system has three main areas:
+
+- `backend/`: a Python 3.13 FastAPI application using Strands Agents and Amazon
+  Bedrock. Deterministic services own SQL generation/repair orchestration, rule
+  validation, candidate generation/refinement, and historical backtesting.
+- `mcp/`: a Python 3.13 FastMCP server that owns schema inspection and the
+  read-only SQLite query boundary. It validates SQL, applies limits and
+  timeouts, and executes against an in-memory snapshot of the bundled dataset.
+- `terraform/`: AWS infrastructure scaffolding for AgentCore, ECR, IAM, and
+  related deployment work.
+
+The dated files in `specs/` describe the product direction and original
+backlog. GitHub Issues are the current source of truth for delivery status,
+priority, acceptance criteria, and follow-up work.
+
+## Architecture and Product Invariants
+
+- The FastAPI backend remains stateless between HTTP requests. The browser owns
+  bounded conversation history and explicit working state.
+- The intended conversational architecture is a `ChatAgent` called by
+  `/v1/chat`. It uses ordinary, service-backed tools for exploration, rule
+  generation, refinement, backtesting, and comparison. Analytical work is
+  performed by an `AnalysisAgent` through the Text2SQL service. Do not introduce
+  hidden server-side handoff state.
+- Specialist agents and deterministic services must remain independently
+  callable by their domain endpoints. Agent prose is never the authoritative
+  representation of rules, metrics, or state.
+- Structured artifacts are returned to clients so the frontend does not need to
+  parse prose.
+- Do not persist raw transaction result sets in browser state. Persist only
+  bounded history, working state, and small summaries.
 
 ### SQL and candidate-rule safety
 
-- Flag any path that executes generated SQL or candidate rules without passing
-  through deterministic validation and the MCP read-only execution boundary.
-  The safe path parses and validates first, then executes through MCP.
+- Generated SQL and candidate rules must pass deterministic validation before
+  execution and must execute through the MCP read-only boundary.
+- Candidate rules are SQL `WHERE` predicates over the canonical
+  `fraud_transactions` relation, not arbitrary statements.
+- Outcome-only fields such as `is_fraud` are ground truth for internal metric
+  calculation and must not be usable as candidate-rule features.
+- Preserve MCP query limits, timeouts, single-statement checks, and read-only
+  enforcement. Never bypass them for convenience.
 
 ### Backtest cohort semantics
 
-- Flag quality metrics that treat `is_fraud IS NULL` as non-fraud. Confusion and
-  fraud-value metrics use labelled rows; alert volume uses all rows and reports
-  unlabelled flagged transactions explicitly.
+- Never treat `is_fraud IS NULL` as non-fraud.
+- Confusion-matrix and fraud-value quality metrics use labelled rows only.
+- Alert-volume metrics use all rows and explicitly report unlabelled flagged
+  transactions.
 
-### Stateless conversation ownership
+## GitHub Issue Workflow
 
-- Flag hidden server-side conversation state or persistence of raw transaction
-  result sets. The client supplies bounded history and explicit working state;
-  only small summaries may be persisted in the browser.
+GitHub Issues are the live backlog. Every material change must have an issue
+before implementation begins, including defects and follow-up work found during
+review. A tiny typo may be folded into an already-open issue only when it is
+clearly part of that issue's scope.
+
+### Issue quality
+
+Each issue should state:
+
+- the problem or user outcome;
+- the required scope and relevant architectural constraints;
+- testable acceptance criteria;
+- dependencies or ordering constraints;
+- links to the originating spec, PR, or Codex comment when applicable.
+
+Keep the issue updated if implementation discoveries materially change its
+scope. Do not silently broaden a feature branch into unrelated work.
+
+### Labels and priorities
+
+Apply one priority label, at least one scope label, and one type label:
+
+- Priority: `priority:P0`, `priority:P1`, `priority:P2`, or `priority:P3`.
+- Scope: `scope:backend`, `scope:mcp`, `scope:frontend`,
+  `scope:evaluation`, `scope:documentation`, or `scope:infrastructure`.
+- Type: `type:feature`, `type:enhancement`, `type:bug`,
+  `type:documentation`, or `type:infrastructure`.
+
+Priority means:
+
+- P0: blocks the core safe product loop; work first.
+- P1: required MVP capability or high-impact correctness fix.
+- P2: important follow-up, usability, resilience, or drill-down work.
+- P3: polish, optional deployment, or non-blocking improvement.
+
+Work from highest to lowest priority. Within a priority, resolve dependencies
+and correctness defects before dependent features. Finish and merge one issue
+before starting the next unless the issue explicitly calls for coordinated
+parallel work.
+
+### Review findings and issue closure
+
+- A PR must contain `Closes #<issue-number>` so the squash merge closes its
+  issue automatically.
+- Resolve all Codex P0 and P1 findings in the current PR before merging.
+- If a lower-priority finding is valid but intentionally out of scope, create a
+  follow-up issue with the correct priority, scope, and type labels. Link the
+  exact review comment and the originating PR.
+- Apply the same process to useful comments discovered on already-merged PRs:
+  create an issue instead of losing the feedback.
+- Do not close an issue merely because code was written. Close it through the
+  merged PR after its acceptance criteria and quality gates are satisfied.
+
+Useful commands:
+
+```bash
+gh issue list --state open
+gh issue view <issue-number> --comments
+gh issue create --title "..." --body-file <file> \
+  --label "priority:P1" --label "scope:backend" --label "type:feature"
+```
+
+## Development Workflow
+
+Use one issue, one feature branch, and one PR at a time.
+
+### 1. Start from current `main`
+
+The worktree must be clean. Preserve user changes and stop if unrelated local
+changes overlap the task.
+
+```bash
+git checkout main
+git pull --ff-only
+git status --short --branch
+git checkout -b feature/<issue-number>-<short-slug>
+```
+
+Use the `feature/` prefix for features, fixes, documentation, CI, and
+infrastructure changes so branch naming stays predictable.
+
+### 2. Implement only the issue scope
+
+- Read the issue, relevant specs, and nearby tests before editing.
+- Prefer deterministic domain services around agent behavior.
+- Add or update tests with the implementation, including failure paths and
+  boundary cases.
+- Preserve existing user work in a dirty worktree and avoid unrelated cleanup.
+- Update documentation when behavior, setup, architecture, or commands change.
+
+### 3. Run local quality gates
+
+Install locked development dependencies before validating a Python package:
+
+```bash
+cd backend
+uv sync --locked --dev
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest --cov=sherlock --cov-report=term-missing --cov-fail-under=80
+```
+
+For MCP changes:
+
+```bash
+cd mcp
+uv sync --locked --dev
+uv run ruff check .
+uv run ruff format --check .
+uv run ty check
+uv run pytest --cov=fraud_mcp --cov=db --cov-report=term-missing \
+  --cov-fail-under=80
+```
+
+The minimum coverage floor is 80% for each affected Python package. New code
+must not use unrelated well-covered modules to mask missing tests. Run focused
+tests during development, then the complete affected-package command above
+before opening a PR.
+
+For Terraform changes, at minimum run:
+
+```bash
+terraform -chdir=terraform fmt -check
+terraform -chdir=terraform validate
+```
+
+For documentation-only changes, run `git diff --check` and manually verify all
+commands and links. When frontend tooling is introduced, follow its checked-in
+package scripts and CI workflow; do not invent commands that are not present in
+the repository.
+
+### 4. Commit, push, and open the PR
+
+Use a focused commit message and include the issue-closing reference in the PR
+body. Complete the repository PR template, especially the verification results.
+
+```bash
+git diff --check
+git status --short
+git add <in-scope-files>
+git commit -m "<imperative summary>"
+git push -u origin feature/<issue-number>-<short-slug>
+gh pr create --base main --head feature/<issue-number>-<short-slug> \
+  --title "<outcome>" --body-file <pr-body-file>
+```
+
+Never push feature work directly to `main`. Never combine multiple backlog
+issues in one PR solely to save review time.
+
+## CI and Codex Review
+
+Applicable path-based CI runs on pull requests:
+
+- `Backend CI`: Ruff plus pytest with at least 80% coverage.
+- `MCP CI`: Ruff, ty, and pytest with at least 80% coverage.
+- `Codex Review Gate`: requires a Codex review for the exact current head SHA.
+
+The Codex review requirement applies even to documentation-only PRs. GitHub
+branch protection/rulesets are unavailable while this private repository is on
+its current plan, so the workflow check and this file are mandatory process
+controls even when GitHub cannot technically block an override.
+
+### Trigger and wait for Codex
+
+Opening a PR may start an automatic Codex review. If one is not already in
+progress, request it with a PR comment:
+
+```bash
+gh pr comment <pr-number> --body '@codex review'
+```
+
+Codex posts or updates a review summary. Wait until the summary says the review
+completed for the current seven-character head SHA, or until
+`chatgpt-codex-connector[bot]` submits a formal review for the full current SHA.
+A friendly Codex comment alone is not sufficient if it refers to an older
+commit.
+
+Use these commands to monitor the PR:
+
+```bash
+gh pr view <pr-number> --json headRefOid,mergeStateStatus,statusCheckRollup,url
+gh pr view <pr-number> --comments
+gh pr checks <pr-number> --watch --interval 10
+```
+
+The gate can finish before Codex and fail with “No Codex review exists for the
+current PR head.” Once Codex has completed, rerun the failed gate in GitHub or
+identify and rerun it with:
+
+```bash
+gh run list --workflow codex-review.yml --branch \
+  feature/<issue-number>-<short-slug>
+gh run rerun <run-id>
+gh run watch <run-id> --exit-status
+```
+
+The gate recognizes the exact API login
+`chatgpt-codex-connector[bot]`; GitHub's UI may display a shorter friendly name.
+
+### Respond to findings
+
+- Review every inline finding and the summary; do not rely only on the gate's
+  pass/fail result.
+- Fix every P0 and P1 finding, run the full applicable local checks, commit, and
+  push.
+- Any push changes the PR head SHA and invalidates the earlier review. Request a
+  fresh `@codex review`, wait for completion on the new head, and rerun the gate
+  if needed.
+- Track valid deferred findings as labelled GitHub issues before merging.
+
+Do not merge while any applicable check is pending or failing, while a Codex
+review is still running, or while required findings remain unresolved.
+
+## Merge and Synchronize
+
+When all CI checks pass and Codex has reviewed the current head, squash-merge
+and delete the remote feature branch:
+
+```bash
+gh pr checks <pr-number>
+gh pr merge <pr-number> --squash --delete-branch
+git checkout main
+git pull --ff-only
+git status --short --branch
+```
+
+Confirm that:
+
+- the PR is merged and its issue is closed;
+- local `main` matches `origin/main`;
+- the worktree is clean;
+- the feature branch is deleted locally and remotely.
+
+Only then select the next issue and create its branch from the updated `main`.
