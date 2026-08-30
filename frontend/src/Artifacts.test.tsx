@@ -72,4 +72,44 @@ describe("artifact rendering", () => {
     expect(screen.queryByRole("tab", { name: /Chart/ })).not.toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "-2" })).toBeInTheDocument();
   });
+
+  it("scales fractional series against their actual maximum", () => {
+    const { container } = render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["card_type", "fraud_rate"],
+          rows: [
+            ["Debit", 0.0031],
+            ["Credit", 0.00155],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+    const bars = container.querySelectorAll<HTMLElement>(".bar");
+    expect(bars[0]).toHaveStyle({ height: "100%" });
+    expect(bars[1]).toHaveStyle({ height: "50%" });
+  });
+
+  it("renders an all-zero series with zero-height bars", () => {
+    const { container } = render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["card_type", "fraud_rate"],
+          rows: [
+            ["Debit", 0],
+            ["Credit", 0],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+    for (const bar of container.querySelectorAll<HTMLElement>(".bar")) {
+      expect(bar).toHaveStyle({ height: "0%" });
+    }
+  });
 });

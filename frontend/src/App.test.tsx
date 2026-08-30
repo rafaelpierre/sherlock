@@ -137,6 +137,27 @@ describe("Sherlock application", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps failed user turns within the live history bound", async () => {
+    const messages = Array.from({ length: 20 }, (_, index) => ({
+      id: `message-${index}`,
+      role: (index % 2 ? "assistant" : "user") as "user" | "assistant",
+      content: `Bounded ${index}`,
+    }));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ conversationId: "saved-id", title: "Bounded", messages, workingState: {} }),
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ detail: "Temporary failure" }, { status: 500 }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Failed turn{enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Temporary failure");
+    expect(screen.queryByText("Bounded 0")).not.toBeInTheDocument();
+    expect(screen.getByText("Failed turn", { selector: ".user-message p" })).toBeInTheDocument();
+  });
+
   it("restores a saved investigation and sends bounded plain history", async () => {
     const messages = Array.from({ length: 22 }, (_, index) => ({
       role: (index % 2 ? "assistant" : "user") as "user" | "assistant",

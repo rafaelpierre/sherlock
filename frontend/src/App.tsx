@@ -164,7 +164,10 @@ export default function App() {
     setInvestigation((current) => ({
       ...current,
       title: current.title ?? message,
-      messages: [...current.messages, { id: crypto.randomUUID(), role: "user", content: message }],
+      messages: [
+        ...current.messages,
+        { id: crypto.randomUUID(), role: "user" as const, content: message },
+      ].slice(-20),
     }));
     try {
       const response = await sendChat(

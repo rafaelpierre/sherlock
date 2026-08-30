@@ -93,7 +93,7 @@ function TableArtifact({ artifact }: { artifact: Extract<Artifact, { type: "tabl
       : -1;
   const [view, setView] = useState<"chart" | "result">(numericColumn > 0 ? "chart" : "result");
   const chartRows = numericColumn > 0 ? artifact.rows.slice(0, 20) : [];
-  const max = Math.max(1, ...chartRows.map((row) => Number(row[numericColumn])));
+  const max = Math.max(0, ...chartRows.map((row) => Number(row[numericColumn])));
   return (
     <section className="data-card">
       <div className="artifact-tabs" role="tablist" aria-label="Result display">
@@ -126,7 +126,9 @@ function TableArtifact({ artifact }: { artifact: Extract<Artifact, { type: "tabl
               <span className="bar-value">{integer.format(Number(row[numericColumn]))}</span>
               <div
                 className="bar"
-                style={{ height: `${Math.max(4, (Number(row[numericColumn]) / max) * 100)}%` }}
+                style={{
+                  height: `${max === 0 ? 0 : Math.max(4, (Number(row[numericColumn]) / max) * 100)}%`,
+                }}
               />
               <span className="bar-label">{String(row[0])}</span>
             </div>
