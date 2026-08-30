@@ -23,7 +23,8 @@ bundled fraud dataset.
 
 Requires Docker with Compose v2, AWS credentials, and access to a Bedrock model.
 The backend uses the standard AWS credential chain. By default, Compose mounts
-`~/.aws` read-only and selects the `default` profile:
+`~/.aws` read-only; the AWS SDK uses its normal default profile when
+`AWS_PROFILE` is unset:
 
 ```bash
 docker compose up --build --wait
