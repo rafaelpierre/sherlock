@@ -646,6 +646,45 @@ tbody tr:hover {
   font-size: 12px;
   line-height: 1.6;
 }
+.stream-activity {
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid #dce1ec;
+  border-radius: 12px;
+  background: #ffffffba;
+}
+.stream-activity summary {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 15px;
+  color: #52617b;
+  background: #f4f6fa;
+  cursor: pointer;
+  font-size: 12px;
+}
+.stream-activity summary > span {
+  color: #748cca;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stream-activity summary > small {
+  color: #778197;
+}
+.stream-activity > p,
+.stream-result {
+  margin: 0;
+  padding: 13px 15px;
+  color: #5e687e;
+  font-size: 13px;
+}
+.stream-result {
+  border-top: 1px solid #e5e8ef;
+  background: #fafbfc;
+}
 .activity {
   margin: 12px 0 50px 53px;
   animation: reveal 0.35s ease both;

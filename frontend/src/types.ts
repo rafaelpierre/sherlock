@@ -102,16 +102,43 @@ export const chatResponseSchema = z.strictObject({
   }),
 });
 
+const streamActivityIdSchema = z.string().min(1).max(200);
+const streamActivityNameSchema = z.string().min(1).max(200);
+const streamActivityMessageSchema = z.string().min(1).max(2_000);
+
+export const chatStreamEventSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("text_delta"), delta: z.string().min(1).max(10_000) }),
+  z.strictObject({
+    type: z.literal("tool_call"),
+    id: streamActivityIdSchema,
+    kind: z.enum(["tool_call", "agent_handoff"]),
+    name: streamActivityNameSchema,
+    message: streamActivityMessageSchema,
+  }),
+  z.strictObject({
+    type: z.literal("tool_result"),
+    id: streamActivityIdSchema,
+    message: streamActivityMessageSchema,
+  }),
+  z.strictObject({ type: z.literal("complete"), response: chatResponseSchema }),
+  z.strictObject({ type: z.literal("error"), message: streamActivityMessageSchema }),
+]);
+
 export type BacktestMetrics = z.infer<typeof backtestMetricsSchema>;
 export type BacktestResult = z.infer<typeof backtestResultSchema>;
 export type Artifact = z.infer<typeof artifactSchema>;
 export type WorkingState = z.infer<typeof workingStateSchema>;
 export type ChatResponse = z.infer<typeof chatResponseSchema>;
+export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
+export type StreamActivity = Extract<ChatStreamEvent, { type: "tool_call" }> & {
+  result?: string;
+};
 
 export interface TranscriptMessage extends ConversationMessage {
   id?: string;
   artifacts?: Artifact[];
   intent?: string;
+  activities?: StreamActivity[];
 }
 
 export interface Investigation {

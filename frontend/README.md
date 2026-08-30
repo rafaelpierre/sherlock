@@ -35,15 +35,23 @@ Open <http://localhost:3000>. Client-side routes fall back to `index.html`, and
 `GET /health` is used for container readiness. Proxied API requests allow up to
 five minutes for multi-step analytical turns to return a response.
 
-Successful chat responses are validated with the Zod schemas in
-`src/types.ts` before application state is updated. Those schemas are the
-frontend source for both runtime validation and inferred TypeScript types; they
-mirror the Pydantic response models in `backend/src/sherlock/api/chat_models.py`
-and `backend/src/sherlock/api/artifacts.py`, which remain the API/OpenAPI source
-of truth. Contract changes must update the backend models, the co-located Zod
-schemas, and their valid/malformed response tests together. Unknown artifact
-types are rejected at this boundary and use the normal recoverable chat-error
-path.
+Chat requests prefer Server-Sent Events using the named `text_delta`,
+`tool_call`, `tool_result`, `complete`, and `error` events. Text and activity
+updates render while a request is pending, but only the validated `complete`
+payload commits artifacts, metadata, and working state. The client temporarily
+accepts the original JSON response so it remains compatible while backend SSE
+support is delivered.
+
+Successful completion payloads and stream events are validated with the Zod
+schemas in `src/types.ts` before application state is updated. Those schemas
+are the frontend source for both runtime validation and inferred TypeScript
+types; they mirror the Pydantic response models in
+`backend/src/sherlock/api/chat_models.py` and
+`backend/src/sherlock/api/artifacts.py`, which remain the API/OpenAPI source of
+truth. Contract changes must update the backend models, the co-located Zod
+schemas, and their valid/malformed response tests together. Unknown event and
+artifact types are rejected at this boundary and use the normal recoverable
+chat-error path.
 
 Quality checks:
 

@@ -12,6 +12,10 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
   });
 }
 
+function streamEvent(name: string, data: unknown): Uint8Array {
+  return new TextEncoder().encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 describe("Sherlock application", () => {
   it("renders the empty state and submits with Enter", async () => {
     const user = userEvent.setup();
@@ -70,6 +74,87 @@ describe("Sherlock application", () => {
     expect(screen.getByRole("cell", { name: "NovaTech" })).toBeInTheDocument();
     await user.click(screen.getByText("View generated SQL"));
     expect(screen.getByText(/SELECT partner/)).toBeVisible();
+  });
+
+  it("renders streamed text and collapses completed tool activity", async () => {
+    const user = userEvent.setup();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            stream = controller;
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    render(<App />);
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Stream this{enter}");
+
+    act(() => stream.enqueue(streamEvent("text_delta", { delta: "Working on " })));
+    expect(await screen.findByText("Working on")).toBeInTheDocument();
+    expect(screen.queryByText("Analyzing")).not.toBeInTheDocument();
+
+    act(() =>
+      stream.enqueue(
+        streamEvent("tool_call", {
+          id: "call-1",
+          kind: "agent_handoff",
+          name: "Data Analyst",
+          message: "Handing off the analysis",
+        }),
+      ),
+    );
+    const activity = (await screen.findByText("Data Analyst")).closest("details");
+    expect(activity).toHaveAttribute("open");
+    expect(activity).toHaveTextContent("Running");
+
+    act(() =>
+      stream.enqueue(streamEvent("tool_result", { id: "call-1", message: "Analysis completed" })),
+    );
+    await waitFor(() => expect(activity).not.toHaveAttribute("open"));
+    expect(activity).toHaveTextContent("Complete");
+
+    act(() => {
+      stream.enqueue(streamEvent("text_delta", { delta: "the result." }));
+      stream.enqueue(streamEvent("complete", chatResponse));
+      stream.close();
+    });
+    expect(await screen.findByRole("heading", { name: "Accounts linked" })).toBeInTheDocument();
+    expect(screen.getByText("Analysis completed")).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      workingState: { candidate_rule: "amount_usd > 1000" },
+    });
+  });
+
+  it("rolls back a partial assistant turn when the stream closes early", async () => {
+    const user = userEvent.setup();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            stream = controller;
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    render(<App />);
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Interrupted stream{enter}");
+    act(() => stream.enqueue(streamEvent("text_delta", { delta: "Partial answer" })));
+    expect(await screen.findByText("Partial answer")).toBeInTheDocument();
+
+    act(() => stream.close());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Sherlock returned an invalid response",
+    );
+    expect(screen.queryByText("Partial answer")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Interrupted stream", { selector: ".user-message p" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders GitHub-flavored Markdown tables in assistant messages", () => {
@@ -214,8 +299,10 @@ describe("Sherlock application", () => {
     render(<App />);
     await user.type(screen.getByLabelText("Ask Sherlock"), "Old question{enter}");
     expect(screen.getByRole("status")).toBeInTheDocument();
+    const signal = (vi.mocked(fetch).mock.calls[0][1] as RequestInit).signal;
 
     await user.click(screen.getByRole("button", { name: "New investigation" }));
+    expect(signal?.aborted).toBe(true);
     expect(
       screen.getByRole("heading", { name: /what would you like to uncover/i }),
     ).toBeInTheDocument();
