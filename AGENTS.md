@@ -180,6 +180,17 @@ uv run pytest --cov=fraud_mcp --cov=db --cov-report=term-missing \
   --cov-fail-under=80
 ```
 
+For evaluation-package changes:
+
+```bash
+cd evals
+uv sync --locked --dev
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest --cov=sherlock_evals --cov-report=term-missing \
+  --cov-fail-under=80
+```
+
 The minimum coverage floor is 80% for each affected Python package. New code
 must not use unrelated well-covered modules to mask missing tests. Run focused
 tests during development, then the complete affected-package command above
@@ -252,6 +263,7 @@ Applicable path-based CI runs on pull requests:
 - `Backend CI`: Ruff, ty, Complexipy, and pytest with at least 80% coverage.
 - `MCP CI`: Ruff, ty, and pytest with at least 80% coverage.
 - `Frontend CI`: Oxlint and Oxfmt checks after a locked npm install.
+- `Evals CI`: Ruff lint/format and pytest with at least 80% coverage.
 - `Codex Review Gate`: requires a Codex review for the exact current head SHA.
 
 The Codex review requirement applies even to documentation-only PRs. GitHub
