@@ -201,6 +201,28 @@ npm run lint
 npm run format:check
 ```
 
+### Browser verification
+
+For every frontend behavior change, or any backend/API change that affects a
+browser workflow, run a focused Playwright check against the locally rebuilt
+Docker Compose stack before opening the PR. The check must drive a real browser
+through the affected user journey and use the live `/v1` network path; do not
+mock, intercept, stub, or route API/network responses for this verification.
+
+Start the stack from the repository root with valid AWS credentials, region, and
+Bedrock access:
+
+```bash
+docker compose up --build --wait
+```
+
+Use the browser at `http://localhost:3000` and exercise both the intended
+success path and relevant error/retry or reload behavior. If no committed
+Playwright suite exists, run a focused local Playwright script without network
+mocking and record the exact scenario and result in the PR verification section.
+Health checks alone do not satisfy this requirement because they do not invoke
+Bedrock or the chat workflow.
+
 For documentation-only changes, run `git diff --check` and manually verify all
 commands and links. Do not invent quality commands that are not present in the
 repository.
