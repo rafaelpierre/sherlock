@@ -308,6 +308,39 @@ branch protection/rulesets are unavailable while this private repository is on
 its current plan, so the workflow check and this file are mandatory process
 controls even when GitHub cannot technically block an override.
 
+### Review baseline
+
+Review every change against both its issue acceptance criteria and these
+cross-cutting principles. Specific issue scope controls what belongs in the PR;
+these checks identify regressions, design flaws, and follow-up work that the
+issue may not have anticipated.
+
+- **Compatibility:** trace affected API, artifact, SSE, persistence, evaluation,
+  configuration, and deployment contracts across their consumers. Version or
+  migrate an intentional breaking change; otherwise preserve compatibility and
+  update both sides of a typed contract together.
+- **Modularity and ownership:** keep orchestration, deterministic domain logic,
+  model behavior, database execution, and UI rendering at their established
+  boundaries. Avoid duplicated business rules, hidden state, inappropriate
+  coupling, and abstractions that obscure a single clear owner.
+- **Maintainability:** look for code smells such as unclear control flow,
+  unbounded or duplicated logic, weak error boundaries, misleading names, and
+  tests that assert implementation accidents rather than observable behavior.
+- **Scalability and resilience:** assess request lifecycles, bounded work,
+  concurrency, timeouts, cancellation, resource cleanup, cache ownership, and
+  failure behavior. Do not rely on a frontend/proxy timeout as the only bound.
+- **Security and data safety:** preserve validation and the MCP read-only query
+  boundary; check authorization, secret handling, injection risks, sensitive
+  data exposure, and reasoning/provider-data leakage. Candidate-rule and cohort
+  safety invariants remain mandatory.
+- **Operational fit:** keep documentation, local commands, CI, observability,
+  and deployment assumptions consistent with the change and its runtime
+  dependencies.
+
+Record valid findings that are out of scope as labelled follow-up issues, as
+described below; do not silently waive a systemic concern just because the
+current feature works.
+
 ### Trigger and wait for Codex
 
 Opening a PR may start an automatic Codex review. If one is not already in
