@@ -17,6 +17,7 @@ from sherlock.api.artifacts import (
     TableArtifact,
 )
 from sherlock.api.schemas import BacktestResponse, QueryData
+from sherlock.contracts import MAX_SQL_LENGTH
 
 ARTIFACT_ADAPTER = TypeAdapter(Artifact)
 METRICS: dict[str, Any] = {
@@ -76,6 +77,32 @@ def test_analysis_step_groups_question_sql_and_table_evidence() -> None:
     )
 
     assert artifact.table.rows == [["Debit", 0.0031]]
+
+
+@pytest.mark.parametrize("artifact", [SQLArtifact, AnalysisStepArtifact])
+def test_sql_artifacts_share_the_bounded_sql_contract(
+    artifact: type[SQLArtifact | AnalysisStepArtifact],
+) -> None:
+    sql = "x" * (MAX_SQL_LENGTH + 1)
+    payload: dict[str, Any]
+    if artifact is SQLArtifact:
+        payload = {"type": "sql", "sql": sql}
+    else:
+        payload = {
+            "type": "analysis_step",
+            "step": 1,
+            "question": "Return one value",
+            "sql": sql,
+            "table": {
+                "columns": ["value"],
+                "rows": [[1]],
+                "row_count": 1,
+                "truncated": False,
+            },
+        }
+
+    with pytest.raises(ValidationError):
+        artifact.model_validate(payload)
 
 
 def test_candidate_rule_artifact_serializes_validation_result() -> None:

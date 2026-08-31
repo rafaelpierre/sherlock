@@ -40,7 +40,7 @@ class AnalysisStepArtifact(BaseModel):
     type: Literal["analysis_step"]
     step: int = Field(ge=1)
     question: str = Field(min_length=1, max_length=2_000)
-    sql: str = Field(min_length=1, max_length=20_000)
+    sql: BoundedSQL
     table: QueryData
 
 
