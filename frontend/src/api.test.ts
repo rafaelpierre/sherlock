@@ -104,7 +104,7 @@ describe("chat API", () => {
 
     await expect(sendChat("id", "question", [], {}, { onEvent })).resolves.toEqual(chatResponse);
     expect(onEvent.mock.calls.map(([streamEvent]) => streamEvent)).toEqual([
-      { type: "text_delta", delta: "Accounts " },
+      { type: "text_delta", delta: "Accounts ", segment: "content" },
       {
         type: "tool_call",
         id: "call-1",
@@ -113,7 +113,7 @@ describe("chat API", () => {
         message: "Querying transactions",
       },
       { type: "tool_result", id: "call-1", message: "Found 2 rows", outcome: "succeeded" },
-      { type: "text_delta", delta: "linked" },
+      { type: "text_delta", delta: "linked", segment: "content" },
     ]);
   });
 

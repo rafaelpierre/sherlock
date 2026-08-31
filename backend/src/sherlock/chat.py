@@ -64,8 +64,14 @@ Intent mapping:
 
 Use recent history only for conversational interpretation. Critical rule
 referents come from explicit working state inside the tools. After the tool
-returns, summarize its result concisely. Candidate rules are investigation
-hypotheses, not production fraud decisions.
+returns, summarize its result concisely and end with any useful follow-up or
+clarifying question. Preserve this user-visible turn order:
+1. Before calling the tool, give one brief acknowledgement of what you will do.
+   Do not claim results or ask follow-up questions at this stage.
+2. Call exactly one tool.
+3. After the tool returns, explain the result, then put follow-up or
+   clarification questions last.
+Candidate rules are investigation hypotheses, not production fraud decisions.
 """.strip()
 
 
@@ -155,6 +161,7 @@ class _ChatExecution:
     active_activities: dict[str, str] = field(default_factory=dict)
     cancel_signal: threading.Event = field(default_factory=threading.Event)
     analysis_message: str | None = None
+    flush_buffered_text: Callable[[], None] | None = None
 
     def select(self, intent: ChatIntent) -> bool:
         if self.intent is not None:
@@ -171,6 +178,8 @@ class _ChatExecution:
         return True
 
     def begin_activity(self, tool_name: str) -> str | None:
+        if self.flush_buffered_text is not None:
+            self.flush_buffered_text()
         if self.event_sink is None:
             return None
         self.activity_count += 1
@@ -251,6 +260,16 @@ ChatStreamItem = tuple[
 StreamQueueItem = (
     ChatTextDelta | ChatToolCall | ChatToolResult | ChatResponse | Exception | None
 )
+
+
+@dataclass(frozen=True)
+class _NativeStreamResult:
+    """The native model result and the public text already emitted."""
+
+    result: Any
+    emitted_text_units: int
+
+
 MAX_COMPLETE_STREAM_EVENT_CHARACTERS = 256_000
 
 _ACTIVITY_COPY: dict[
@@ -324,24 +343,33 @@ async def _consume_native_stream(
     prompt: str,
     cancel_signal: threading.Event,
     queue: asyncio.Queue[StreamQueueItem],
+    set_flush_buffered_text: Callable[[Callable[[], None]], None],
     has_selected_intent: Callable[[], bool],
     allows_text: Callable[[], bool],
-) -> Any:
+) -> _NativeStreamResult:
     result: Any | None = None
-    streamed_text_length = 0
-    pending_text: list[str] = []
+    streamed_text_units = 0
+    emitted_text_units = 0
+    pending_text: list[ChatTextDelta] = []
+
+    def emit_text(text: ChatTextDelta) -> None:
+        nonlocal emitted_text_units
+        emitted_text_units += _utf16_length(text.delta)
+        queue.put_nowait(text)
+
+    set_flush_buffered_text(lambda: _flush_pending_text(pending_text, emit_text))
     async for native_event in model.stream_async(prompt, cancel_signal=cancel_signal):
         delta = native_event.get("data")
         if isinstance(delta, str) and delta:
-            streamed_text_length += len(delta)
-            if streamed_text_length > MAX_ASSISTANT_MESSAGE_LENGTH:
+            streamed_text_units += _utf16_length(delta)
+            if streamed_text_units > MAX_ASSISTANT_MESSAGE_LENGTH:
                 raise ChatAgentError(
                     "The ChatAgent returned an oversized assistant message."
                 )
             _publish_native_text(
                 delta,
                 pending_text,
-                queue,
+                emit_text,
                 has_selected_intent,
                 allows_text,
             )
@@ -350,34 +378,52 @@ async def _consume_native_stream(
     if result is None:
         raise ChatAgentError("The ChatAgent returned no result event.")
     if has_selected_intent() and allows_text():
-        _flush_pending_text(pending_text, queue)
-    return result
+        _flush_pending_text(pending_text, emit_text)
+    return _NativeStreamResult(result, emitted_text_units)
 
 
 def _publish_native_text(
     delta: str,
-    pending_text: list[str],
-    queue: asyncio.Queue[StreamQueueItem],
+    pending_text: list[ChatTextDelta],
+    emit_text: Callable[[ChatTextDelta], None],
     has_selected_intent: Callable[[], bool],
     allows_text: Callable[[], bool],
 ) -> None:
     """Buffer coordinator preambles until the selected workflow is known."""
 
     if not has_selected_intent():
-        pending_text.append(delta)
+        pending_text.append(ChatTextDelta(delta=delta, segment="introduction"))
         return
     if not allows_text():
         return
-    _flush_pending_text(pending_text, queue)
-    queue.put_nowait(ChatTextDelta(delta=delta))
+    _flush_pending_text(pending_text, emit_text)
+    emit_text(ChatTextDelta(delta=delta, segment="content"))
 
 
 def _flush_pending_text(
-    pending_text: list[str], queue: asyncio.Queue[StreamQueueItem]
+    pending_text: list[ChatTextDelta], emit_text: Callable[[ChatTextDelta], None]
 ) -> None:
     for pending_delta in pending_text:
-        queue.put_nowait(ChatTextDelta(delta=pending_delta))
+        emit_text(pending_delta)
     pending_text.clear()
+
+
+def _utf16_length(value: str) -> int:
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _truncate_utf16(value: str, maximum_units: int) -> str:
+    """Keep complete Unicode code points within the browser's UTF-16 limit."""
+
+    units = 0
+    characters: list[str] = []
+    for character in value:
+        character_units = _utf16_length(character)
+        if units + character_units > maximum_units:
+            break
+        characters.append(character)
+        units += character_units
+    return "".join(characters)
 
 
 def _complete_stream_event_size(response: ChatResponse) -> int:
@@ -494,17 +540,32 @@ class ChatAgent:
 
         async def produce() -> None:
             try:
-                result = await _consume_native_stream(
+                native_result = await _consume_native_stream(
                     model,
                     self._prompt(message),
                     cancel_signal,
                     queue,
+                    lambda callback: setattr(
+                        self._execution, "flush_buffered_text", callback
+                    ),
                     lambda: self._execution.intent is not None,
                     self._execution.allows_streamed_text,
                 )
-                response = self._response(result)
+                response = self._response(native_result.result)
                 if self._execution.intent == "EXPLORE":
-                    queue.put_nowait(ChatTextDelta(delta=response.message))
+                    available_units = MAX_ASSISTANT_MESSAGE_LENGTH - (
+                        native_result.emitted_text_units
+                    )
+                    if available_units > 0:
+                        streamed_synthesis = _truncate_utf16(
+                            response.message, available_units
+                        )
+                        if streamed_synthesis:
+                            queue.put_nowait(
+                                ChatTextDelta(
+                                    delta=streamed_synthesis, segment="content"
+                                )
+                            )
                 queue.put_nowait(response)
             except asyncio.CancelledError:
                 raise
@@ -513,6 +574,7 @@ class ChatAgent:
                 queue.put_nowait(_stream_exception(exc))
             finally:
                 self._execution.event_sink = None
+                self._execution.flush_buffered_text = None
                 try:
                     model.cleanup()
                 finally:

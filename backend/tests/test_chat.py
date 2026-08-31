@@ -21,6 +21,7 @@ from sherlock.api.chat_models import (
 )
 from sherlock.api.schemas import ConversationMessage, WorkingState
 from sherlock.chat import (
+    CHAT_SYSTEM_PROMPT,
     ChatAgent,
     ChatAgentError,
     ChatAgentFactory,
@@ -30,6 +31,7 @@ from sherlock.chat import (
     MissingChatState,
     _complete_stream_event_size,
     _strands_history,
+    _truncate_utf16,
 )
 from sherlock.services.backtest import InvalidBacktestRule
 from sherlock.services.rule_validation import (
@@ -55,6 +57,15 @@ METRICS = {
     "fraud_value_recall": 0.6,
     "alerts_per_day": 2.0,
 }
+
+
+def test_chat_prompt_preserves_introduction_tool_result_and_follow_up_order() -> None:
+    assert CHAT_SYSTEM_PROMPT.index(
+        "Before calling the tool"
+    ) < CHAT_SYSTEM_PROMPT.index("Call exactly one tool")
+    assert CHAT_SYSTEM_PROMPT.index("Call exactly one tool") < CHAT_SYSTEM_PROMPT.index(
+        "After the tool returns"
+    )
 
 
 class StubWorkflows:
@@ -300,14 +311,13 @@ def test_stream_translates_workflow_activity_and_text_without_raw_results() -> N
 
     events = asyncio.run(collect_stream(agent, "What is the fraud rate?"))
 
-    assert [name for name, _ in events] == [
+    assert [name for name, _ in events[:4]] == [
         "tool_call",
         "tool_call",
         "tool_result",
         "tool_result",
-        "text_delta",
-        "complete",
     ]
+    assert events[-1][0] == "complete"
     call = events[0][1]
     result = events[3][1]
     assert isinstance(call, ChatToolCall)
@@ -397,6 +407,14 @@ class EarlyOnlyPreambleStreamingModel(PreambleStreamingModel):
         yield {"result": await self.invoke_async(prompt)}
 
 
+class LongPreambleStreamingModel(PreambleStreamingModel):
+    async def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]:
+        yield {"data": "i" * 9_999}
+        yield {"result": await self.invoke_async(prompt)}
+
+
 class PreambleModelFactory:
     def __call__(
         self, tools: list[Any], history: list[Message]
@@ -419,7 +437,30 @@ class NonExplorePreambleModelFactory:
         )
 
 
-def test_explore_stream_discards_coordinator_preamble_before_specialist_text() -> None:
+class LongPreambleModelFactory:
+    def __call__(
+        self, tools: list[Any], history: list[Message]
+    ) -> LongPreambleStreamingModel:
+        return LongPreambleStreamingModel(
+            tools,
+            [("explore", {"question": "fraud rate"})],
+            "Coordinator result.",
+        )
+
+
+class LongSynthesisAnalysisModel(SingleQueryAnalysisModel):
+    async def invoke_async(
+        self,
+        prompt: str,
+        *,
+        limits: Limits,
+        cancel_signal: threading.Event,
+    ) -> TextResult:
+        await self.tool(question=prompt)
+        return TextResult("s" * 100)
+
+
+def test_explore_stream_emits_coordinator_preamble_before_activity() -> None:
     workflows = StubWorkflows()
     agent = ChatAgent(
         workflows,
@@ -434,12 +475,64 @@ def test_explore_stream_discards_coordinator_preamble_before_specialist_text() -
 
     events = asyncio.run(collect_stream(agent, "Explore fraud"))
 
+    assert [name for name, _ in events] == [
+        "text_delta",
+        "tool_call",
+        "tool_call",
+        "tool_result",
+        "tool_result",
+        "text_delta",
+        "complete",
+    ]
     deltas = [
         payload.delta
         for name, payload in events
         if name == "text_delta" and isinstance(payload, ChatTextDelta)
     ]
-    assert deltas == ["Grounded analysis synthesis."]
+    assert deltas == [
+        "Coordinator preamble. ",
+        "Grounded analysis synthesis.",
+    ]
+    segments = [
+        payload.segment
+        for name, payload in events
+        if name == "text_delta" and isinstance(payload, ChatTextDelta)
+    ]
+    assert segments == ["introduction", "content"]
+
+
+def test_explore_stream_caps_introduction_and_synthesis_at_client_limit() -> None:
+    workflows = StubWorkflows()
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        WorkingState(),
+        analysis_agent_factory=AnalysisAgentFactory(
+            workflows, model_factory=LongSynthesisAnalysisModel
+        ),
+        model_factory=LongPreambleModelFactory(),
+    )
+
+    events = asyncio.run(collect_stream(agent, "Explore fraud"))
+
+    deltas = [
+        payload
+        for name, payload in events
+        if name == "text_delta" and isinstance(payload, ChatTextDelta)
+    ]
+    assert sum(len(delta.delta.encode("utf-16-le")) // 2 for delta in deltas) == 10_000
+    assert deltas[-1].delta == "s"
+    complete = events[-1][1]
+    assert isinstance(complete, ChatResponse)
+    assert complete.message == "s" * 100
+
+
+def test_explore_stream_never_splits_an_astral_unicode_character() -> None:
+    assert _truncate_utf16("\U0001f680", 1) == ""
+    assert _truncate_utf16("\U0001f680", 2) == "\U0001f680"
 
 
 def test_non_explore_stream_flushes_preamble_after_intent_selection() -> None:

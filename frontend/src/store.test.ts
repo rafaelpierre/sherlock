@@ -129,10 +129,36 @@ describe("investigation persistence", () => {
     expect(JSON.stringify(stored)).not.toContain('"rows"');
   });
 
+  it("migrates v2 history and preserves a streamed introduction", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...storedPayload(),
+        version: 2,
+        messages: [{ role: "assistant", content: "Result summary" }],
+      }),
+    );
+    const investigation = loadInvestigation();
+    investigation.messages[0].intro = "I will investigate this.";
+
+    saveInvestigation(investigation);
+
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      version: STORAGE_VERSION,
+      messages: [
+        {
+          role: "assistant",
+          intro: "I will investigate this.",
+          content: "Result summary",
+        },
+      ],
+    });
+  });
+
   it.each([
     ["malformed JSON", "not json"],
     ["missing fields", JSON.stringify({ version: STORAGE_VERSION })],
-    ["an incompatible version", JSON.stringify(storedPayload({ version: 3 }))],
+    ["an incompatible version", JSON.stringify(storedPayload({ version: 4 }))],
     ["an incompatible shape", JSON.stringify(storedPayload({ unexpected: true }))],
     [
       "raw artifacts attached to a message",

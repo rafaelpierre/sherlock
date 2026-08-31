@@ -2,7 +2,7 @@ import { z } from "zod";
 import { workingStateSchema, type Investigation } from "./types";
 
 export const STORAGE_KEY = "sherlock.conversation";
-export const STORAGE_VERSION = 2;
+export const STORAGE_VERSION = 3;
 const MAX_STORED_MESSAGES = 20;
 
 const storedActivitySchema = z.strictObject({
@@ -21,6 +21,7 @@ const storedMessageSchema = z.discriminatedUnion("role", [
   z.strictObject({
     role: z.literal("assistant"),
     content: z.string().min(1).max(10_000),
+    intro: z.string().min(1).max(10_000).optional(),
     activities: z.array(storedActivitySchema).max(50).optional(),
     outcome: z.enum(["complete", "failed"]).optional(),
   }),
@@ -45,8 +46,13 @@ const storedInvestigationSchema = z.strictObject({
   working_state: workingStateSchema,
 });
 
+const storedInvestigationV2Schema = storedInvestigationSchema.extend({
+  version: z.literal(2),
+});
+
 const storedPayloadSchema = z.discriminatedUnion("version", [
   storedInvestigationV1Schema,
+  storedInvestigationV2Schema,
   storedInvestigationSchema,
 ]);
 
@@ -60,21 +66,18 @@ export function loadInvestigation(): Investigation {
     if (!stored) return newInvestigation();
     const parsed = storedPayloadSchema.parse(JSON.parse(stored));
     const messages =
-      parsed.version === STORAGE_VERSION
-        ? storedInvestigationSchema
-            .parse(parsed)
-            .messages.slice(-MAX_STORED_MESSAGES)
-            .map((message) => ({
-              ...message,
-              id: crypto.randomUUID(),
-              activities:
-                message.role === "assistant"
-                  ? message.activities?.map((activity) => ({
-                      ...activity,
-                      id: crypto.randomUUID(),
-                    }))
-                  : undefined,
-            }))
+      parsed.version !== 1
+        ? parsed.messages.slice(-MAX_STORED_MESSAGES).map((message) => ({
+            ...message,
+            id: crypto.randomUUID(),
+            activities:
+              message.role === "assistant"
+                ? message.activities?.map((activity) => ({
+                    ...activity,
+                    id: crypto.randomUUID(),
+                  }))
+                : undefined,
+          }))
         : parsed.messages.slice(-MAX_STORED_MESSAGES).map((message) => ({
             ...message,
             id: crypto.randomUUID(),
@@ -98,12 +101,13 @@ export function saveInvestigation(investigation: Investigation): void {
       conversation_id: investigation.conversationId,
       messages: investigation.messages
         .slice(-MAX_STORED_MESSAGES)
-        .map(({ role, content, activities, outcome }) =>
+        .map(({ role, content, intro, activities, outcome }) =>
           role === "user"
             ? { role, content }
             : {
                 role,
                 content,
+                ...(intro && { intro }),
                 ...(activities && {
                   activities: activities.map(
                     ({ kind, name, message, result, outcome: activityOutcome }) => ({

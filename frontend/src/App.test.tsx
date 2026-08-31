@@ -174,6 +174,86 @@ describe("Sherlock application", () => {
     );
   });
 
+  it("keeps the streamed introduction before evidence and the completed summary last", async () => {
+    const user = userEvent.setup();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            stream = controller;
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    render(<App />);
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Stream this{enter}");
+
+    act(() =>
+      stream.enqueue(
+        streamEvent("tool_call", {
+          id: "call-1",
+          kind: "agent_handoff",
+          name: "Data Analyst",
+          message: "Handing off the analysis",
+        }),
+      ),
+    );
+    act(() =>
+      stream.enqueue(
+        streamEvent("text_delta", { delta: "I will investigate this.", segment: "introduction" }),
+      ),
+    );
+    act(() =>
+      stream.enqueue(
+        streamEvent("tool_result", {
+          id: "call-1",
+          message: "Analysis completed",
+          outcome: "succeeded",
+        }),
+      ),
+    );
+    act(() => {
+      stream.enqueue(
+        streamEvent("text_delta", {
+          delta: "The result is ready. Any follow-up?",
+          segment: "content",
+        }),
+      );
+      stream.enqueue(
+        streamEvent("complete", {
+          ...chatResponse,
+          message: "The result is ready. Any follow-up?",
+        }),
+      );
+      stream.close();
+    });
+
+    const introduction = await screen.findByText("I will investigate this.");
+    const activity = screen.getByText("Data Analyst");
+    const artifact = screen.getByLabelText("Chart of accounts");
+    const summary = screen.getByText("The result is ready. Any follow-up?");
+    expect(
+      introduction.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      activity.compareDocumentPosition(artifact) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      artifact.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      messages: [
+        expect.objectContaining({ content: "Stream this" }),
+        expect.objectContaining({
+          intro: "I will investigate this.",
+          content: "The result is ready. Any follow-up?",
+        }),
+      ],
+    });
+  });
+
   it("persists a failed streamed turn with its activity summaries", async () => {
     const user = userEvent.setup();
     let stream!: ReadableStreamDefaultController<Uint8Array>;
@@ -438,6 +518,61 @@ describe("Sherlock application", () => {
     const payload = JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body));
     expect(payload.history).toHaveLength(20);
     expect(payload.working_state.last_sql).toBe("SELECT 1");
+  });
+
+  it("bounds combined assistant introductions and summaries in request history", async () => {
+    const intro = "I".repeat(6_000);
+    const summary = "S".repeat(5_000);
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: STORAGE_VERSION,
+        conversation_id: SAVED_CONVERSATION_ID,
+        messages: [{ role: "assistant", intro, content: summary }],
+        working_state: {},
+      }),
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ ...chatResponse, artifacts: [] }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Continue{enter}");
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    const payload = JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body));
+    const combined = payload.history[0].content as string;
+
+    expect(combined).toHaveLength(10_000);
+    expect(combined).toBe(`${intro.slice(0, 4_998)}\n\n${summary}`);
+  });
+
+  it("keeps Unicode code points intact when bounding combined history", async () => {
+    const intro = `${"I".repeat(4_997)}\ud83d\ude80`;
+    const summary = "S".repeat(5_000);
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: STORAGE_VERSION,
+        conversation_id: SAVED_CONVERSATION_ID,
+        messages: [{ role: "assistant", intro, content: summary }],
+        working_state: {},
+      }),
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ ...chatResponse, artifacts: [] }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Continue{enter}");
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    const payload = JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body));
+    const combined = payload.history[0].content as string;
+
+    expect(combined).toBe(`${"I".repeat(4_997)}\n\n${summary}`);
+    expect(combined).toHaveLength(9_999);
+    expect(JSON.stringify(combined)).not.toContain("\\\\ud83d");
   });
 
   it("sends persisted failed activity context with a later try-again turn", async () => {

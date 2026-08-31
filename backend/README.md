@@ -80,11 +80,15 @@ state or conversation history.
 Clients that send `Accept: text/event-stream` receive named SSE events in this
 order:
 
+- `text_delta` carries an explicit `segment`: buffered pre-tool text is an
+  `introduction`, while `content` appends the result summary. For `EXPLORE`,
+  coordinator text after the handoff is discarded so only the specialist owns
+  the closing synthesis;
 - `tool_call` starts a user-facing activity or specialist handoff;
 - `tool_result` finishes that activity using the same bounded activity ID and
   an explicit success/failure outcome;
-- `text_delta` appends bounded assistant prose (the terminal specialist
-  synthesis for `EXPLORE`);
+- later `text_delta` events append the result summary and any closing follow-up
+  or clarification question (the terminal specialist synthesis for `EXPLORE`);
 - `complete` supplies the authoritative `ChatResponse`; or
 - `error` supplies a bounded, user-safe message if the stream cannot complete.
 

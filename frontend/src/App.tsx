@@ -24,6 +24,28 @@ const suggestions = [
   "Show fraud value by merchant category",
 ];
 const MAX_MESSAGE_LENGTH = 2_000;
+const MAX_HISTORY_CONTENT_LENGTH = 10_000;
+const HISTORY_SEGMENT_SEPARATOR = "\n\n";
+
+function truncateUtf16(value: string, maximumUnits: number): string {
+  let units = 0;
+  let truncated = "";
+  for (const character of value) {
+    if (units + character.length > maximumUnits) break;
+    truncated += character;
+    units += character.length;
+  }
+  return truncated;
+}
+
+function assistantHistoryContent(content: string, intro?: string): string {
+  const boundedContent = truncateUtf16(content, MAX_HISTORY_CONTENT_LENGTH);
+  if (!intro) return boundedContent;
+  const availableIntroLength =
+    MAX_HISTORY_CONTENT_LENGTH - boundedContent.length - HISTORY_SEGMENT_SEPARATOR.length;
+  if (availableIntroLength <= 0) return boundedContent;
+  return `${truncateUtf16(intro, availableIntroLength)}${HISTORY_SEGMENT_SEPARATOR}${boundedContent}`;
+}
 
 function Composer({
   value,
@@ -168,6 +190,7 @@ function Message({
       </div>
       <div className="assistant-content">
         <span className="message-label">Sherlock</span>
+        {message.intro && <Prose content={message.intro} />}
         {message.activities?.map((activity) => (
           <StreamActivityView activity={activity} key={activity.id} />
         ))}
@@ -184,25 +207,29 @@ function Message({
             <span>{message.content}</span>
           </div>
         ) : (
-          message.content && (
-            <div className="prose">
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  table: ({ children }) => (
-                    <div className="table-scroll markdown-table">
-                      <table>{children}</table>
-                    </div>
-                  ),
-                }}
-              >
-                {message.content}
-              </Markdown>
-            </div>
-          )
+          message.content && <Prose content={message.content} />
         )}
       </div>
     </article>
+  );
+}
+
+function Prose({ content }: { content: string }) {
+  return (
+    <div className="prose">
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          table: ({ children }) => (
+            <div className="table-scroll markdown-table">
+              <table>{children}</table>
+            </div>
+          ),
+        }}
+      >
+        {content}
+      </Markdown>
+    </div>
   );
 }
 
@@ -250,12 +277,12 @@ export default function App() {
     const controller = new AbortController();
     currentRequest.current = controller;
     const history: ConversationMessage[] = investigation.messages.map(
-      ({ role, content, activities, outcome }) =>
+      ({ role, content, intro, activities, outcome }) =>
         role === "user"
           ? { role, content }
           : {
               role,
-              content,
+              content: assistantHistoryContent(content, intro),
               ...(activities && {
                 activities: activities.map(
                   ({ kind, name, message: activityMessage, result, outcome: activityOutcome }) => ({
@@ -300,7 +327,10 @@ export default function App() {
                   : current.messages[draftIndex];
               let updated = draft;
               if (event.type === "text_delta") {
-                updated = { ...draft, content: draft.content + event.delta };
+                updated =
+                  event.segment === "introduction"
+                    ? { ...draft, intro: (draft.intro ?? "") + event.delta }
+                    : { ...draft, content: draft.content + event.delta };
               } else if (event.type === "tool_call") {
                 updated = {
                   ...draft,
@@ -333,6 +363,7 @@ export default function App() {
           id: crypto.randomUUID(),
           role: "assistant",
           content: response.message,
+          intro: draftIndex === -1 ? undefined : current.messages[draftIndex].intro,
           artifacts: response.artifacts,
           intent: response.metadata.intent,
           activities: draftIndex === -1 ? undefined : current.messages[draftIndex].activities,

@@ -47,6 +47,14 @@ payload commits artifacts, metadata, and working state. The client temporarily
 accepts the original JSON response so it remains compatible while backend SSE
 support is delivered.
 
+For streamed turns, each `text_delta` declares whether it is an `introduction`
+or `content`. The client uses that segment rather than arrival timing, so a
+brief buffered acknowledgement remains before its activity; completed activity
+and typed artifacts come next, and the final result summary and any follow-up
+question render last. For `EXPLORE`, only the specialist owns closing content.
+This is presentation-only state: the established chat request and response
+contracts remain unchanged.
+
 Successful completion payloads and stream events are validated with the Zod
 schemas in `src/types.ts` before application state is updated. Those schemas
 are the frontend source for both runtime validation and inferred TypeScript
