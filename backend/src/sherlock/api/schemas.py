@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from sherlock.contracts import BoundedSQL
+
 
 class QueryRequest(BaseModel):
     """A natural-language analytics question."""
@@ -37,7 +39,7 @@ class QueryResponse(BaseModel):
     """Successful Text2SQL API response."""
 
     question: str
-    sql: str
+    sql: BoundedSQL
     result: QueryData
     attempts: int
     cached_sql: bool
@@ -237,7 +239,7 @@ class WorkingState(BaseModel):
 
     candidate_rule: str | None = Field(default=None, max_length=20_000)
     previous_rule: str | None = Field(default=None, max_length=20_000)
-    last_sql: str | None = Field(default=None, max_length=20_000)
+    last_sql: BoundedSQL | None = None
     last_backtest: StoredBacktest | None = None
 
     @field_validator("candidate_rule", "previous_rule", "last_sql")

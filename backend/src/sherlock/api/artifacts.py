@@ -12,6 +12,7 @@ from sherlock.api.schemas import (
     RuleComparisonResponse,
     RuleGenerateResponse,
 )
+from sherlock.contracts import BoundedSQL
 
 
 class SQLArtifact(BaseModel):
@@ -20,7 +21,7 @@ class SQLArtifact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["sql"]
-    sql: str = Field(min_length=1)
+    sql: BoundedSQL
 
 
 class TableArtifact(QueryData):

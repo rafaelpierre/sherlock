@@ -28,7 +28,10 @@ curl -X POST http://localhost:8080/v1/query \
 
 The response includes the normalized SQL, tabular result, generation attempt
 count, and whether the initial natural-language-to-SQL translation was served
-from the process-local cache.
+from the process-local cache. Generated and returned SQL is limited to 20,000
+characters so every successful query can be retained as bounded
+`working_state.last_sql` in a later chat request. Model output above that limit
+is rejected before MCP execution and `/v1/query` returns a controlled `502`.
 
 ## Use the conversational API
 
