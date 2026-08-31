@@ -192,6 +192,44 @@ def test_query_attempt_limit_counts_failures_and_rejects_extra_calls() -> None:
     assert "query-attempt budget is exhausted" in tool_results[-1]["error"]
 
 
+def test_cumulative_evidence_size_limit_keeps_prior_steps() -> None:
+    class OversizedEvidenceService(ScriptedService):
+        async def query(self, question: str) -> dict[str, Any]:
+            response = await super().query(question)
+            if len(self.questions) == 2:
+                response["result"]["rows"] = [["x" * 150_000]]
+            return response
+
+    tool_results: list[dict[str, Any]] = []
+
+    async def script(tool: Any) -> None:
+        tool_results.append(await tool(question="Baseline"))
+        tool_results.append(await tool(question="Wide result"))
+
+    result = run_analysis(OversizedEvidenceService(), ModelFactory(script))
+
+    assert len(result.steps) == 1
+    assert "evidence limit" in tool_results[1]["error"]
+
+
+def test_cumulative_evidence_limit_counts_utf16_units() -> None:
+    class EmojiEvidenceService(ScriptedService):
+        async def query(self, question: str) -> dict[str, Any]:
+            response = await super().query(question)
+            response["result"]["rows"] = [["\U0001f600" * 80_000]]
+            return response
+
+    tool_results: list[dict[str, Any]] = []
+
+    async def script(tool: Any) -> None:
+        tool_results.append(await tool(question="Emoji result"))
+
+    with pytest.raises(AnalysisAgentError, match="no successful"):
+        run_analysis(EmojiEvidenceService(), ModelFactory(script))
+
+    assert "evidence limit" in tool_results[0]["error"]
+
+
 def test_partial_failure_is_paired_and_successful_evidence_remains() -> None:
     service = ScriptedService(failures={1})
     events: list[tuple[str, bool | None]] = []

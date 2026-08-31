@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any, cast
@@ -23,9 +24,11 @@ from sherlock.chat import (
     ChatAgent,
     ChatAgentError,
     ChatAgentFactory,
+    ChatModelFactory,
     ChatStreamItem,
     InvalidChatState,
     MissingChatState,
+    _complete_stream_event_size,
     _strands_history,
 )
 from sherlock.services.backtest import InvalidBacktestRule
@@ -243,13 +246,20 @@ class SequentialQueryWorkflows(StubWorkflows):
         }
 
 
+class WideAnalysisWorkflows(StubWorkflows):
+    async def query(self, question: str) -> dict[str, Any]:
+        response = await super().query(question)
+        response["result"]["rows"] = [["x" * 135_200]]
+        return response
+
+
 def single_query_analysis_factory(workflows: StubWorkflows) -> AnalysisAgentFactory:
     return AnalysisAgentFactory(workflows, model_factory=SingleQueryAnalysisModel)
 
 
 def create_agent(
     workflows: StubWorkflows,
-    model_factory: ScriptedModelFactory,
+    model_factory: ChatModelFactory,
     state: WorkingState | None = None,
     history: list[ConversationMessage] | None = None,
 ) -> ChatAgent:
@@ -364,8 +374,85 @@ class BlockingStreamingModel(ScriptedModel):
         self, prompt: str, *, cancel_signal: threading.Event
     ) -> AsyncIterator[dict[str, Any]]:
         self.cancel_signal = cancel_signal
+        await self.tools["generate_rule"](instruction="high amount")
         yield {"data": "Starting"}
         await asyncio.Event().wait()
+
+
+class PreambleStreamingModel(ScriptedModel):
+    async def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]:
+        yield {"data": "Coordinator preamble. "}
+        result = await self.invoke_async(prompt)
+        yield {"data": "Coordinator follow-up."}
+        yield {"result": result}
+
+
+class EarlyOnlyPreambleStreamingModel(PreambleStreamingModel):
+    async def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]:
+        yield {"data": "Coordinator preamble. "}
+        yield {"result": await self.invoke_async(prompt)}
+
+
+class PreambleModelFactory:
+    def __call__(
+        self, tools: list[Any], history: list[Message]
+    ) -> PreambleStreamingModel:
+        return PreambleStreamingModel(
+            tools,
+            [("explore", {"question": "fraud rate"})],
+            "Coordinator result.",
+        )
+
+
+class NonExplorePreambleModelFactory:
+    def __call__(
+        self, tools: list[Any], history: list[Message]
+    ) -> EarlyOnlyPreambleStreamingModel:
+        return EarlyOnlyPreambleStreamingModel(
+            tools,
+            [("generate_rule", {"instruction": "high amount"})],
+            "Coordinator result.",
+        )
+
+
+def test_explore_stream_discards_coordinator_preamble_before_specialist_text() -> None:
+    workflows = StubWorkflows()
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        WorkingState(),
+        analysis_agent_factory=single_query_analysis_factory(workflows),
+        model_factory=PreambleModelFactory(),
+    )
+
+    events = asyncio.run(collect_stream(agent, "Explore fraud"))
+
+    deltas = [
+        payload.delta
+        for name, payload in events
+        if name == "text_delta" and isinstance(payload, ChatTextDelta)
+    ]
+    assert deltas == ["Grounded analysis synthesis."]
+
+
+def test_non_explore_stream_flushes_preamble_after_intent_selection() -> None:
+    agent = create_agent(StubWorkflows(), NonExplorePreambleModelFactory())
+
+    events = asyncio.run(collect_stream(agent, "Create a rule"))
+
+    deltas = [
+        payload.delta
+        for name, payload in events
+        if name == "text_delta" and isinstance(payload, ChatTextDelta)
+    ]
+    assert deltas == ["Coordinator preamble. "]
 
 
 class BlockingModelFactory:
@@ -397,7 +484,8 @@ def test_closing_stream_cancels_model_and_cleans_up() -> None:
             AsyncGenerator[ChatStreamItem],
             agent.stream("Analyze transactions"),
         )
-        assert (await anext(stream))[0] == "text_delta"
+        while (await anext(stream))[0] != "text_delta":
+            pass
         await stream.aclose()
 
     asyncio.run(consume_one_event())
@@ -519,6 +607,43 @@ def test_explore_aggregates_ordered_multi_step_evidence_and_metadata() -> None:
     assert response.metadata.repair_count == 3
     assert response.metadata.cache_hit is False
     assert response.message == "Grounded in all three analysis steps."
+
+
+def test_explore_rejects_complete_event_that_exceeds_frontend_limit() -> None:
+    workflows = WideAnalysisWorkflows()
+    state = WorkingState(
+        candidate_rule="\\" * 20_000,
+        previous_rule="\\" * 20_000,
+        last_sql="\\" * 20_000,
+        last_backtest={"rule": "\\" * 20_000, "metrics": METRICS},
+    )
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        state,
+        analysis_agent_factory=single_query_analysis_factory(workflows),
+        model_factory=ScriptedModelFactory([("explore", {"question": "Wide result"})]),
+    )
+
+    with pytest.raises(ChatAgentError, match="oversized complete response"):
+        asyncio.run(agent.respond("Explore fraud"))
+
+
+def test_complete_stream_size_includes_sse_data_prefix() -> None:
+    payload = {"value": "\U0001f600"}
+
+    class FakeResponse:
+        def model_dump(self, *, mode: str) -> dict[str, str]:
+            assert mode == "json"
+            return payload
+
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    assert _complete_stream_event_size(cast(ChatResponse, FakeResponse())) == (
+        len(serialized.encode("utf-16-le")) // 2 + len("data: ") + 1
+    )
 
 
 def test_generate_rule_tool_updates_authoritative_candidate_state() -> None:

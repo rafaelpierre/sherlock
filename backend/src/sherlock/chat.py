@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -250,6 +251,7 @@ ChatStreamItem = tuple[
 StreamQueueItem = (
     ChatTextDelta | ChatToolCall | ChatToolResult | ChatResponse | Exception | None
 )
+MAX_COMPLETE_STREAM_EVENT_CHARACTERS = 256_000
 
 _ACTIVITY_COPY: dict[
     str, tuple[Literal["tool_call", "agent_handoff"], str, str, str]
@@ -322,24 +324,69 @@ async def _consume_native_stream(
     prompt: str,
     cancel_signal: threading.Event,
     queue: asyncio.Queue[StreamQueueItem],
+    has_selected_intent: Callable[[], bool],
     allows_text: Callable[[], bool],
 ) -> Any:
     result: Any | None = None
     streamed_text_length = 0
+    pending_text: list[str] = []
     async for native_event in model.stream_async(prompt, cancel_signal=cancel_signal):
         delta = native_event.get("data")
-        if isinstance(delta, str) and delta and allows_text():
+        if isinstance(delta, str) and delta:
             streamed_text_length += len(delta)
             if streamed_text_length > MAX_ASSISTANT_MESSAGE_LENGTH:
                 raise ChatAgentError(
                     "The ChatAgent returned an oversized assistant message."
                 )
-            queue.put_nowait(ChatTextDelta(delta=delta))
+            _publish_native_text(
+                delta,
+                pending_text,
+                queue,
+                has_selected_intent,
+                allows_text,
+            )
         if "result" in native_event:
             result = native_event["result"]
     if result is None:
         raise ChatAgentError("The ChatAgent returned no result event.")
+    if has_selected_intent() and allows_text():
+        _flush_pending_text(pending_text, queue)
     return result
+
+
+def _publish_native_text(
+    delta: str,
+    pending_text: list[str],
+    queue: asyncio.Queue[StreamQueueItem],
+    has_selected_intent: Callable[[], bool],
+    allows_text: Callable[[], bool],
+) -> None:
+    """Buffer coordinator preambles until the selected workflow is known."""
+
+    if not has_selected_intent():
+        pending_text.append(delta)
+        return
+    if not allows_text():
+        return
+    _flush_pending_text(pending_text, queue)
+    queue.put_nowait(ChatTextDelta(delta=delta))
+
+
+def _flush_pending_text(
+    pending_text: list[str], queue: asyncio.Queue[StreamQueueItem]
+) -> None:
+    for pending_delta in pending_text:
+        queue.put_nowait(ChatTextDelta(delta=pending_delta))
+    pending_text.clear()
+
+
+def _complete_stream_event_size(response: ChatResponse) -> int:
+    """Measure SSE JSON in the UTF-16 units enforced by the frontend parser."""
+
+    payload = json.dumps(
+        response.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+    )
+    return len(payload.encode("utf-16-le")) // 2 + len("data: ") + 1
 
 
 def _stream_exception(exc: Exception) -> Exception:
@@ -452,6 +499,7 @@ class ChatAgent:
                     self._prompt(message),
                     cancel_signal,
                     queue,
+                    lambda: self._execution.intent is not None,
                     self._execution.allows_streamed_text,
                 )
                 response = self._response(result)
@@ -504,7 +552,7 @@ class ChatAgent:
             raise ChatAgentError(
                 "The ChatAgent returned an oversized assistant message."
             )
-        return ChatResponse(
+        response = ChatResponse(
             message=assistant_message,
             artifacts=self._execution.artifacts,
             working_state=self._execution.working_state,
@@ -514,6 +562,14 @@ class ChatAgent:
                 cache_hit=self._execution.cache_hit,
             ),
         )
+        if (
+            _complete_stream_event_size(response)
+            >= MAX_COMPLETE_STREAM_EVENT_CHARACTERS
+        ):
+            raise ChatAgentError(
+                "The ChatAgent returned an oversized complete response."
+            )
+        return response
 
     def _raise_errors(self) -> None:
         if self._execution.missing_state is not None:
