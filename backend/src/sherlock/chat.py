@@ -322,24 +322,52 @@ async def _consume_native_stream(
     prompt: str,
     cancel_signal: threading.Event,
     queue: asyncio.Queue[StreamQueueItem],
+    has_selected_intent: Callable[[], bool],
     allows_text: Callable[[], bool],
 ) -> Any:
     result: Any | None = None
     streamed_text_length = 0
+    pending_text: list[str] = []
     async for native_event in model.stream_async(prompt, cancel_signal=cancel_signal):
         delta = native_event.get("data")
-        if isinstance(delta, str) and delta and allows_text():
+        if isinstance(delta, str) and delta:
             streamed_text_length += len(delta)
             if streamed_text_length > MAX_ASSISTANT_MESSAGE_LENGTH:
                 raise ChatAgentError(
                     "The ChatAgent returned an oversized assistant message."
                 )
-            queue.put_nowait(ChatTextDelta(delta=delta))
+            _publish_native_text(
+                delta,
+                pending_text,
+                queue,
+                has_selected_intent,
+                allows_text,
+            )
         if "result" in native_event:
             result = native_event["result"]
     if result is None:
         raise ChatAgentError("The ChatAgent returned no result event.")
     return result
+
+
+def _publish_native_text(
+    delta: str,
+    pending_text: list[str],
+    queue: asyncio.Queue[StreamQueueItem],
+    has_selected_intent: Callable[[], bool],
+    allows_text: Callable[[], bool],
+) -> None:
+    """Buffer coordinator preambles until the selected workflow is known."""
+
+    if not has_selected_intent():
+        pending_text.append(delta)
+        return
+    if not allows_text():
+        return
+    for pending_delta in pending_text:
+        queue.put_nowait(ChatTextDelta(delta=pending_delta))
+    pending_text.clear()
+    queue.put_nowait(ChatTextDelta(delta=delta))
 
 
 def _stream_exception(exc: Exception) -> Exception:
@@ -452,6 +480,7 @@ class ChatAgent:
                     self._prompt(message),
                     cancel_signal,
                     queue,
+                    lambda: self._execution.intent is not None,
                     self._execution.allows_streamed_text,
                 )
                 response = self._response(result)

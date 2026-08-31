@@ -364,8 +364,53 @@ class BlockingStreamingModel(ScriptedModel):
         self, prompt: str, *, cancel_signal: threading.Event
     ) -> AsyncIterator[dict[str, Any]]:
         self.cancel_signal = cancel_signal
+        await self.tools["generate_rule"](instruction="high amount")
         yield {"data": "Starting"}
         await asyncio.Event().wait()
+
+
+class PreambleStreamingModel(ScriptedModel):
+    async def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]:
+        yield {"data": "Coordinator preamble. "}
+        result = await self.invoke_async(prompt)
+        yield {"data": "Coordinator follow-up."}
+        yield {"result": result}
+
+
+class PreambleModelFactory:
+    def __call__(
+        self, tools: list[Any], history: list[Message]
+    ) -> PreambleStreamingModel:
+        return PreambleStreamingModel(
+            tools,
+            [("explore", {"question": "fraud rate"})],
+            "Coordinator result.",
+        )
+
+
+def test_explore_stream_discards_coordinator_preamble_before_specialist_text() -> None:
+    workflows = StubWorkflows()
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        WorkingState(),
+        analysis_agent_factory=single_query_analysis_factory(workflows),
+        model_factory=PreambleModelFactory(),
+    )
+
+    events = asyncio.run(collect_stream(agent, "Explore fraud"))
+
+    deltas = [
+        payload.delta
+        for name, payload in events
+        if name == "text_delta" and isinstance(payload, ChatTextDelta)
+    ]
+    assert deltas == ["Grounded analysis synthesis."]
 
 
 class BlockingModelFactory:
@@ -397,7 +442,8 @@ def test_closing_stream_cancels_model_and_cleans_up() -> None:
             AsyncGenerator[ChatStreamItem],
             agent.stream("Analyze transactions"),
         )
-        assert (await anext(stream))[0] == "text_delta"
+        while (await anext(stream))[0] != "text_delta":
+            pass
         await stream.aclose()
 
     asyncio.run(consume_one_event())
