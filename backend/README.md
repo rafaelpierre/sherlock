@@ -80,10 +80,10 @@ state or conversation history.
 Clients that send `Accept: text/event-stream` receive named SSE events in this
 order:
 
-- `text_delta` carries an explicit `segment`: `introduction` acknowledges the
-  investigation and `content` appends the result summary. Clients render these
-  segments in their declared order even when the model emits an acknowledgement
-  after a tool event;
+- `text_delta` carries an explicit `segment`: buffered pre-tool text is an
+  `introduction`, while `content` appends the result summary. For `EXPLORE`,
+  coordinator text after the handoff is discarded so only the specialist owns
+  the closing synthesis;
 - `tool_call` starts a user-facing activity or specialist handoff;
 - `tool_result` finishes that activity using the same bounded activity ID and
   an explicit success/failure outcome;
