@@ -17,9 +17,11 @@ uv run pytest --cov=sherlock_evals --cov-report=term-missing \
 ## Text2SQL HTTP evaluation
 
 The Text2SQL CLI sends the questions in `data/text2sql.json` to a running
-Sherlock backend through `POST /v1/query`. A case passes when the endpoint
-returns a successful response containing the original question, generated SQL,
-and tabular result data.
+Sherlock backend through `POST /v1/query`. A case passes only when the endpoint
+returns one safe, read-only query and its normalized columns and rows match the
+committed deterministic oracle. The evaluator compares result sets rather than
+generated SQL strings, so different valid SQL can produce the same passing
+answer.
 
 Start the backend, then run the suite from a second terminal:
 
@@ -31,16 +33,62 @@ uv run backend-api
 ```bash
 cd evals
 uv sync --locked --dev
-uv run sherlock-text2sql-eval
+uv run sherlock-text2sql-eval --output eval-results/text2sql-report.json
 ```
 
 Use `--base-url` or `SHERLOCK_BACKEND_URL` to target a different backend. Use
-`--cases` to run a different JSON file and `--timeout` to change the per-request
-timeout. The command runs every case, prints a pass/fail line and summary, and
-exits with status 1 when any case fails.
+`--cases` to run a different schema-version-2 JSON file, `--timeout` to change
+the per-request timeout, and `--output` to persist the case-level and aggregate
+machine-readable report. The command runs every case, prints a pass/fail line
+and summary, and exits with status 1 when any case fails.
 
-The initial suite checks API execution and response shape. Result-correctness
-oracles can be added to the case format in a later iteration.
+Failures are classified independently as `http`, `execution`, `safety`, or
+`semantic`. Semantic accuracy uses only cases that reached result comparison;
+transport, malformed response, truncated result, and unsafe-SQL failures do not
+inflate or reduce that denominator. Reports include expected and actual result
+sets for diagnosis and should be reviewed before sharing.
+
+## Text2SQL oracle contract
+
+Each committed case has `expected.columns`, `expected.rows`, and an explicit
+`comparison` object:
+
+```json
+{
+  "id": "example",
+  "question": "A natural-language analytics question",
+  "expected": {
+    "columns": ["category", "fraud_rate_percent"],
+    "rows": [["example", 0.25]]
+  },
+  "comparison": {
+    "row_order": "insensitive",
+    "column_order": "insensitive",
+    "absolute_tolerance": 0.0001,
+    "relative_tolerance": 0.000001,
+    "null_equivalents": []
+  }
+}
+```
+
+Column names are stripped, whitespace-normalized, and case-folded. An
+order-insensitive column policy reorders row values by their normalized column
+name before comparison. Rows are compared as a multiset when row order is
+insensitive, preserving duplicate counts. Ranked policies additionally name
+ordered columns and sort directions, while allowing rows tied on those keys in
+either order. Numeric tolerances use the usual absolute-or-relative closeness
+rule. JSON `null` is exact by default; configured case-insensitive string tokens
+such as `"n/a"` may be treated as null.
+
+The committed values are calculated from the bundled
+`mcp/db/data/data.db` snapshot through the canonical `fraud_transactions` view.
+Fraud-rate denominators contain labelled rows only (`is_fraud IS NOT NULL`),
+while the unlabelled case counts `is_fraud IS NULL` explicitly. Ranked lists are
+top 10 unless fewer than 10 groups contain qualifying fraudulent rows. Ratio,
+amount, and income distributions use the band labels committed in their
+expected rows; monthly and weekday series use chronological order. These
+definitions make otherwise open-ended questions deterministic without allowing
+outcome-null rows to be treated as non-fraud.
 
 The shared evaluation runner loads versioned JSON suites from `evals/cases`,
 executes all or a selected subset, prints a concise summary, and writes a

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -56,6 +57,7 @@ class AnalysisLimits:
 
 
 DEFAULT_ANALYSIS_LIMITS = AnalysisLimits()
+MAX_ANALYSIS_ARTIFACT_CHARACTERS = 140_000
 
 
 class AnalysisModel(Protocol):
@@ -239,6 +241,15 @@ class AnalysisAgent:
                 sql=response.sql,
                 table=response.result,
             )
+            if _analysis_artifact_size([*execution.steps, step]) > (
+                MAX_ANALYSIS_ARTIFACT_CHARACTERS
+            ):
+                return {
+                    "error": (
+                        "The bounded analysis evidence limit was reached; synthesize "
+                        "from the successful evidence already returned."
+                    )
+                }
             execution.steps.append(step)
             execution.repair_count += response.attempts - 1
             execution.all_cached = execution.all_cached and response.cached_sql
@@ -271,3 +282,14 @@ class AnalysisAgentFactory:
             limits=self._limits,
             model_factory=self._model_factory,
         )
+
+
+def _analysis_artifact_size(steps: list[AnalysisStepArtifact]) -> int:
+    """Measure JSON in UTF-16 units, matching the browser event parser."""
+
+    serialized = json.dumps(
+        [step.model_dump(mode="json") for step in steps],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return len(serialized.encode("utf-16-le")) // 2

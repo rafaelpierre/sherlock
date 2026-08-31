@@ -66,6 +66,11 @@ table. Failed steps consume the query budget; after partial success the agent ma
 recover or explicitly qualify the missing evidence, while an all-failed analysis
 uses the controlled ChatAgent error boundary.
 
+The aggregate grouped evidence is capped at 140,000 JSON characters so the
+terminal SSE response remains within the browser's bounded event parser. A query
+that would exceed this cap is treated as unavailable evidence; earlier successful
+steps remain available for a qualified synthesis.
+
 For `EXPLORE`, `repair_count` is the sum of Text2SQL repairs across successful
 steps and `cache_hit` is true only when every successful step used cached initial
 SQL. `working_state.last_sql` is the most recently successful statement. Raw
