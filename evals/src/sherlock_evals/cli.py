@@ -13,7 +13,7 @@ from typing import Any, Literal
 import click
 import httpx
 
-from sherlock_evals.oracles import ComparisonPolicy, compare_result_sets
+from sherlock_evals.oracles import ComparisonPolicy, RankKey, compare_result_sets
 from sherlock_evals.safety import sql_safety_error
 
 SOURCE_CASES = Path(__file__).parents[2] / "data" / "text2sql.json"
@@ -59,13 +59,14 @@ def _load_policy(case_id: str, value: Any) -> ComparisonPolicy:
         "relative_tolerance",
         "null_equivalents",
     }
-    if set(value) != required:
+    allowed = required | {"rank_by"}
+    if not required.issubset(value) or not set(value).issubset(allowed):
         raise _case_error(
             case_id, f"comparison must contain exactly {sorted(required)!r}"
         )
     row_order = value["row_order"]
     column_order = value["column_order"]
-    if row_order not in {"sensitive", "insensitive"}:
+    if row_order not in {"sensitive", "insensitive", "ranked"}:
         raise _case_error(case_id, "has an invalid comparison.row_order")
     if column_order not in {"sensitive", "insensitive"}:
         raise _case_error(case_id, "has an invalid comparison.column_order")
@@ -88,12 +89,28 @@ def _load_policy(case_id: str, value: Any) -> ComparisonPolicy:
         isinstance(item, str) for item in null_equivalents
     ):
         raise _case_error(case_id, "has invalid null equivalents")
+    raw_rank_by = value.get("rank_by", [])
+    if not isinstance(raw_rank_by, list) or not all(
+        isinstance(item, dict)
+        and set(item) == {"column", "direction"}
+        and isinstance(item["column"], str)
+        and bool(item["column"].strip())
+        and item["direction"] in {"ascending", "descending"}
+        for item in raw_rank_by
+    ):
+        raise _case_error(case_id, "has invalid comparison.rank_by")
+    if (row_order == "ranked") != bool(raw_rank_by):
+        raise _case_error(case_id, "must configure rank_by only for ranked rows")
     return ComparisonPolicy(
         row_order=row_order,
         column_order=column_order,
         absolute_tolerance=float(absolute_tolerance),
         relative_tolerance=float(relative_tolerance),
         null_equivalents=tuple(item.strip().casefold() for item in null_equivalents),
+        rank_by=tuple(
+            RankKey(column=item["column"], direction=item["direction"])
+            for item in raw_rank_by
+        ),
     )
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sherlock_evals.oracles import ComparisonPolicy, compare_result_sets
+from sherlock_evals.oracles import ComparisonPolicy, RankKey, compare_result_sets
 
 
 def _policy(**overrides) -> ComparisonPolicy:
@@ -40,6 +40,31 @@ def test_order_insensitive_comparison_preserves_duplicate_rows() -> None:
     )
 
     assert result.matches
+
+
+def test_ranked_comparison_allows_ties_in_either_order() -> None:
+    rank_by = (RankKey(column="count", direction="descending"),)
+    result = compare_result_sets(
+        ["hour", "count"],
+        [[12, 10], [13, 10], [14, 5]],
+        ["count", "hour"],
+        [[10, 13], [10, 12], [5, 14]],
+        _policy(
+            row_order="ranked",
+            column_order="insensitive",
+            rank_by=rank_by,
+        ),
+    )
+    wrong_order = compare_result_sets(
+        ["hour", "count"],
+        [[12, 10], [13, 10], [14, 5]],
+        ["hour", "count"],
+        [[14, 5], [12, 10], [13, 10]],
+        _policy(row_order="ranked", rank_by=rank_by),
+    )
+
+    assert result.matches
+    assert not wrong_order.matches
 
 
 def test_null_equivalents_are_policy_controlled() -> None:
@@ -84,11 +109,21 @@ def test_wrong_columns_rows_order_and_width_report_mismatches() -> None:
         ["value"], [[1], [2]], ["value"], [[2], [1]], _policy()
     )
     wrong_width = compare_result_sets(["value"], [[1]], ["value"], [[1, 2]], _policy())
+    short_reordered_row = compare_result_sets(
+        ["first", "second"],
+        [[1, 2]],
+        ["second", "first"],
+        [[2]],
+        _policy(column_order="insensitive"),
+    )
 
     assert not wrong_columns.matches and "columns differ" in wrong_columns.message
     assert not wrong_count.matches and "row count differs" in wrong_count.message
     assert not wrong_order.matches and "ordering differ" in wrong_order.message
     assert not wrong_width.matches and "row width" in wrong_width.message
+    assert (
+        not short_reordered_row.matches and "row width" in short_reordered_row.message
+    )
 
 
 def test_duplicate_normalized_columns_are_rejected() -> None:

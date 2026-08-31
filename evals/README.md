@@ -74,19 +74,21 @@ Each committed case has `expected.columns`, `expected.rows`, and an explicit
 Column names are stripped, whitespace-normalized, and case-folded. An
 order-insensitive column policy reorders row values by their normalized column
 name before comparison. Rows are compared as a multiset when row order is
-insensitive, preserving duplicate counts. Numeric tolerances use the usual
-absolute-or-relative closeness rule. JSON `null` is exact by default; configured
-case-insensitive string tokens such as `"n/a"` may be treated as null.
+insensitive, preserving duplicate counts. Ranked policies additionally name
+ordered columns and sort directions, while allowing rows tied on those keys in
+either order. Numeric tolerances use the usual absolute-or-relative closeness
+rule. JSON `null` is exact by default; configured case-insensitive string tokens
+such as `"n/a"` may be treated as null.
 
 The committed values are calculated from the bundled
 `mcp/db/data/data.db` snapshot through the canonical `fraud_transactions` view.
 Fraud-rate denominators contain labelled rows only (`is_fraud IS NOT NULL`),
 while the unlabelled case counts `is_fraud IS NULL` explicitly. Ranked lists are
-top 10 unless the complete domain has fewer than 10 members. Ratio, amount, and
-income distributions use the band labels committed in their expected rows;
-monthly and weekday series use chronological order. These definitions make
-otherwise open-ended questions deterministic without allowing outcome-null
-rows to be treated as non-fraud.
+top 10 unless fewer than 10 groups contain qualifying fraudulent rows. Ratio,
+amount, and income distributions use the band labels committed in their
+expected rows; monthly and weekday series use chronological order. These
+definitions make otherwise open-ended questions deterministic without allowing
+outcome-null rows to be treated as non-fraud.
 
 The shared evaluation runner loads versioned JSON suites from `evals/cases`,
 executes all or a selected subset, prints a concise summary, and writes a
