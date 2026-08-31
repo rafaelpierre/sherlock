@@ -1,10 +1,21 @@
 import { z } from "zod";
 
 export type Role = "user" | "assistant";
+export type ActivityOutcome = "succeeded" | "failed";
 
 export interface ConversationMessage {
   role: Role;
   content: string;
+  activities?: ConversationActivity[];
+  outcome?: "complete" | "failed";
+}
+
+export interface ConversationActivity {
+  kind: "tool_call" | "agent_handoff";
+  name: string;
+  message: string;
+  result: string;
+  outcome: ActivityOutcome;
 }
 
 const nullableNumber = z.number().nullable();
@@ -119,6 +130,7 @@ export const chatStreamEventSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_result"),
     id: streamActivityIdSchema,
     message: streamActivityMessageSchema,
+    outcome: z.enum(["succeeded", "failed"]),
   }),
   z.strictObject({ type: z.literal("complete"), response: chatResponseSchema }),
   z.strictObject({ type: z.literal("error"), message: streamActivityMessageSchema }),
@@ -132,13 +144,17 @@ export type ChatResponse = z.infer<typeof chatResponseSchema>;
 export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
 export type StreamActivity = Extract<ChatStreamEvent, { type: "tool_call" }> & {
   result?: string;
+  outcome?: ActivityOutcome;
 };
 
-export interface TranscriptMessage extends ConversationMessage {
+export interface TranscriptMessage {
   id?: string;
+  role: Role;
+  content: string;
   artifacts?: Artifact[];
   intent?: string;
   activities?: StreamActivity[];
+  outcome?: "complete" | "failed";
 }
 
 export interface Investigation {

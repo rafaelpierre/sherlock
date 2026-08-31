@@ -3,12 +3,14 @@
 Sherlock's Vite, React, and TypeScript client is a stateless investigation
 workspace. It sends browser-owned bounded conversation history and explicit
 working state to `POST /v1/chat`, then renders assistant prose and typed
-artifacts without parsing prose for authoritative data. After each successful
-turn, the client writes a versioned payload to `sherlock.conversation` with the
-conversation ID, at most 20 prose-only messages, and authoritative working
-state. Raw table artifacts are never written to browser storage. Reloading
-restores compatible payloads, while **New investigation** clears both runtime
-and persisted state.
+artifacts without parsing prose for authoritative data. After each completed or
+failed turn, the client writes a versioned payload to `sherlock.conversation`
+with the conversation ID, at most 20 messages, authoritative working state, and
+bounded user-safe activity summaries. Failed turns remain available to give a
+later “try again” request its interrupted context. Raw table artifacts, result
+rows, provider events, tool arguments, internal tool names, and partial prose
+are never written to browser storage. Reloading migrates compatible v1 payloads,
+while **New investigation** clears both runtime and persisted state.
 
 ```bash
 npm ci

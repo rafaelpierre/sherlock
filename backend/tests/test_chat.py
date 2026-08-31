@@ -24,6 +24,7 @@ from sherlock.chat import (
     ChatStreamItem,
     InvalidChatState,
     MissingChatState,
+    _strands_history,
 )
 from sherlock.services.backtest import InvalidBacktestRule
 from sherlock.services.rule_validation import (
@@ -362,6 +363,33 @@ def test_unexpected_workflow_failure_finishes_started_activity() -> None:
     assert isinstance(result, ChatToolResult)
     assert result.id == call.id
     assert result.message == "This activity could not be completed."
+
+
+def test_history_formats_activity_context_as_plain_user_visible_text() -> None:
+    history = _strands_history(
+        [
+            ConversationMessage(
+                role="assistant",
+                content="Sherlock could not complete the request. Please try again.",
+                outcome="failed",
+                activities=[
+                    {
+                        "kind": "agent_handoff",
+                        "name": "Transaction analysis",
+                        "message": "Sherlock is investigating the transaction data.",
+                        "result": "This activity could not be completed.",
+                        "outcome": "failed",
+                    }
+                ],
+            )
+        ]
+    )
+
+    text = history[0]["content"][0]["text"]
+    assert "context only" in text
+    assert "Transaction analysis" in text
+    assert "Outcome: failed" in text
+    assert "toolUse" not in text
 
 
 def test_explore_tool_reuses_text2sql_and_returns_sql_and_table_artifacts() -> None:

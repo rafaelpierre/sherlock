@@ -6,7 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from sherlock.api.schemas import (
+    MAX_HISTORY_ACTIVITIES,
     MAX_HISTORY_MESSAGES,
+    ConversationActivity,
     ConversationMessage,
     ConversationState,
     WorkingState,
@@ -182,3 +184,46 @@ def test_conversation_message_normalizes_content_and_rejects_unknown_role() -> N
         ConversationMessage.model_validate({"role": "system", "content": "hidden"})
     with pytest.raises(ValidationError):
         ConversationMessage(role="assistant", content="   ")
+
+
+def test_assistant_history_can_retain_bounded_user_safe_activity_context() -> None:
+    message = ConversationMessage(
+        role="assistant",
+        content="Sherlock could not complete the request. Please try again.",
+        outcome="failed",
+        activities=[
+            ConversationActivity(
+                kind="agent_handoff",
+                name="Transaction analysis",
+                message="Sherlock is investigating the transaction data.",
+                result="This activity could not be completed.",
+                outcome="failed",
+            )
+        ],
+    )
+
+    assert message.outcome == "failed"
+    assert message.activities[0].outcome == "failed"
+
+
+def test_history_rejects_unbounded_or_user_claimed_activity_context() -> None:
+    activity = {
+        "kind": "tool_call",
+        "name": "Candidate rule",
+        "message": "Sherlock is drafting a candidate rule.",
+        "result": "The candidate rule is ready for review.",
+        "outcome": "succeeded",
+    }
+
+    with pytest.raises(ValidationError):
+        ConversationMessage.model_validate(
+            {"role": "user", "content": "Try again", "activities": [activity]}
+        )
+    with pytest.raises(ValidationError):
+        ConversationMessage.model_validate(
+            {
+                "role": "assistant",
+                "content": "Summary",
+                "activities": [activity] * (MAX_HISTORY_ACTIVITIES + 1),
+            }
+        )

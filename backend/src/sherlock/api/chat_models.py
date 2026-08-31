@@ -111,6 +111,7 @@ class ChatToolResult(BaseModel):
 
     id: str = Field(min_length=1, max_length=MAX_STREAM_ACTIVITY_ID_LENGTH)
     message: str = Field(min_length=1, max_length=MAX_STREAM_ACTIVITY_MESSAGE_LENGTH)
+    outcome: Literal["succeeded", "failed"]
 
 
 class ChatStreamError(BaseModel):

@@ -67,8 +67,8 @@ FastAPI ChatAgent -- exploration --> Text2SQL service --> read-only MCP --> SQLi
 ```
 
 - [`frontend/`](frontend/) is a Vite/React/TypeScript client. It keeps at most
-  20 prose messages plus explicit working state in `localStorage`; raw query
-  result tables are not persisted.
+  20 messages, explicit working state, and bounded user-safe activity summaries
+  in `localStorage`; raw query result tables are not persisted.
 - [`backend/`](backend/) is a Python 3.13 FastAPI application built with Strands
   Agents and Amazon Bedrock. A fresh `ChatAgent` handles each `/v1/chat` request,
   so the backend retains no hidden conversational session state.

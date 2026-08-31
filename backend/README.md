@@ -57,7 +57,8 @@ Clients that send `Accept: text/event-stream` receive named SSE events in this
 order:
 
 - `tool_call` starts a user-facing activity or specialist handoff;
-- `tool_result` finishes that activity using the same bounded activity ID;
+- `tool_result` finishes that activity using the same bounded activity ID and
+  an explicit success/failure outcome;
 - `text_delta` appends assistant prose as it is generated;
 - `complete` supplies the authoritative `ChatResponse`; or
 - `error` supplies a bounded, user-safe message if the stream cannot complete.
@@ -66,6 +67,12 @@ The backend translates native Strands lifecycle events into this stable product
 contract. Provider payloads, reasoning content, raw tool arguments, internal tool
 names, and raw tool results are never sent to the browser. Only `complete` should
 be used to commit artifacts, metadata, or replacement working state.
+
+Client-owned history may include up to 20 messages, with up to 50 user-safe
+activity summaries on each assistant turn. These summaries preserve
+interrupted-turn continuity for a later request, but are formatted as labelled
+conversational context rather than reconstructed native tool calls or
+authoritative data.
 
 ```bash
 curl -N -X POST http://localhost:8080/v1/chat \
