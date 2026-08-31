@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any, cast
@@ -27,6 +28,7 @@ from sherlock.chat import (
     ChatStreamItem,
     InvalidChatState,
     MissingChatState,
+    _complete_stream_event_size,
     _strands_history,
 )
 from sherlock.services.backtest import InvalidBacktestRule
@@ -628,6 +630,20 @@ def test_explore_rejects_complete_event_that_exceeds_frontend_limit() -> None:
 
     with pytest.raises(ChatAgentError, match="oversized complete response"):
         asyncio.run(agent.respond("Explore fraud"))
+
+
+def test_complete_stream_size_includes_sse_data_prefix() -> None:
+    payload = {"value": "\U0001f600"}
+
+    class FakeResponse:
+        def model_dump(self, *, mode: str) -> dict[str, str]:
+            assert mode == "json"
+            return payload
+
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    assert _complete_stream_event_size(cast(ChatResponse, FakeResponse())) == (
+        len(serialized.encode("utf-16-le")) // 2 + len("data: ") + 1
+    )
 
 
 def test_generate_rule_tool_updates_authoritative_candidate_state() -> None:

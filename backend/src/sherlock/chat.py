@@ -386,7 +386,7 @@ def _complete_stream_event_size(response: ChatResponse) -> int:
     payload = json.dumps(
         response.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
     )
-    return len(payload.encode("utf-16-le")) // 2 + 1
+    return len(payload.encode("utf-16-le")) // 2 + len("data: ") + 1
 
 
 def _stream_exception(exc: Exception) -> Exception:
