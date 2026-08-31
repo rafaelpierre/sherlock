@@ -91,6 +91,7 @@ class ChatTextDelta(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     delta: str = Field(min_length=1, max_length=MAX_ASSISTANT_MESSAGE_LENGTH)
+    segment: Literal["introduction", "content"] = "content"
 
 
 class ChatToolCall(BaseModel):

@@ -129,7 +129,11 @@ const streamActivityNameSchema = z.string().min(1).max(200);
 const streamActivityMessageSchema = z.string().min(1).max(2_000);
 
 export const chatStreamEventSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("text_delta"), delta: z.string().min(1).max(10_000) }),
+  z.strictObject({
+    type: z.literal("text_delta"),
+    delta: z.string().min(1).max(10_000),
+    segment: z.enum(["introduction", "content"]).default("content"),
+  }),
   z.strictObject({
     type: z.literal("tool_call"),
     id: streamActivityIdSchema,

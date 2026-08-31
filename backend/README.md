@@ -80,7 +80,10 @@ state or conversation history.
 Clients that send `Accept: text/event-stream` receive named SSE events in this
 order:
 
-- an optional initial `text_delta` briefly acknowledges the investigation;
+- `text_delta` carries an explicit `segment`: `introduction` acknowledges the
+  investigation and `content` appends the result summary. Clients render these
+  segments in their declared order even when the model emits an acknowledgement
+  after a tool event;
 - `tool_call` starts a user-facing activity or specialist handoff;
 - `tool_result` finishes that activity using the same bounded activity ID and
   an explicit success/failure outcome;

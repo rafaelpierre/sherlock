@@ -161,6 +161,7 @@ class _ChatExecution:
     active_activities: dict[str, str] = field(default_factory=dict)
     cancel_signal: threading.Event = field(default_factory=threading.Event)
     analysis_message: str | None = None
+    flush_buffered_text: Callable[[], None] | None = None
 
     def select(self, intent: ChatIntent) -> bool:
         if self.intent is not None:
@@ -177,6 +178,8 @@ class _ChatExecution:
         return True
 
     def begin_activity(self, tool_name: str) -> str | None:
+        if self.flush_buffered_text is not None:
+            self.flush_buffered_text()
         if self.event_sink is None:
             return None
         self.activity_count += 1
@@ -238,7 +241,7 @@ class _ChatExecution:
             self.finish_activity(tool_name, activity_id, succeeded=False)
 
     def allows_streamed_text(self) -> bool:
-        return self.intent != "EXPLORE" and all(
+        return all(
             error is None
             for error in (
                 self.missing_state,
@@ -330,12 +333,15 @@ async def _consume_native_stream(
     prompt: str,
     cancel_signal: threading.Event,
     queue: asyncio.Queue[StreamQueueItem],
+    set_flush_buffered_text: Callable[[Callable[[], None]], None],
     has_selected_intent: Callable[[], bool],
     allows_text: Callable[[], bool],
+    selected_segment: Callable[[], Literal["introduction", "content"]],
 ) -> Any:
     result: Any | None = None
     streamed_text_length = 0
-    pending_text: list[str] = []
+    pending_text: list[ChatTextDelta] = []
+    set_flush_buffered_text(lambda: _flush_pending_text(pending_text, queue))
     async for native_event in model.stream_async(prompt, cancel_signal=cancel_signal):
         delta = native_event.get("data")
         if isinstance(delta, str) and delta:
@@ -350,6 +356,7 @@ async def _consume_native_stream(
                 queue,
                 has_selected_intent,
                 allows_text,
+                selected_segment,
             )
         if "result" in native_event:
             result = native_event["result"]
@@ -362,27 +369,28 @@ async def _consume_native_stream(
 
 def _publish_native_text(
     delta: str,
-    pending_text: list[str],
+    pending_text: list[ChatTextDelta],
     queue: asyncio.Queue[StreamQueueItem],
     has_selected_intent: Callable[[], bool],
     allows_text: Callable[[], bool],
+    selected_segment: Callable[[], Literal["introduction", "content"]],
 ) -> None:
     """Buffer coordinator preambles until the selected workflow is known."""
 
     if not has_selected_intent():
-        pending_text.append(delta)
+        pending_text.append(ChatTextDelta(delta=delta, segment="introduction"))
         return
     if not allows_text():
         return
     _flush_pending_text(pending_text, queue)
-    queue.put_nowait(ChatTextDelta(delta=delta))
+    queue.put_nowait(ChatTextDelta(delta=delta, segment=selected_segment()))
 
 
 def _flush_pending_text(
-    pending_text: list[str], queue: asyncio.Queue[StreamQueueItem]
+    pending_text: list[ChatTextDelta], queue: asyncio.Queue[StreamQueueItem]
 ) -> None:
     for pending_delta in pending_text:
-        queue.put_nowait(ChatTextDelta(delta=pending_delta))
+        queue.put_nowait(pending_delta)
     pending_text.clear()
 
 
@@ -505,12 +513,22 @@ class ChatAgent:
                     self._prompt(message),
                     cancel_signal,
                     queue,
+                    lambda callback: setattr(
+                        self._execution, "flush_buffered_text", callback
+                    ),
                     lambda: self._execution.intent is not None,
                     self._execution.allows_streamed_text,
+                    lambda: (
+                        "introduction"
+                        if self._execution.intent == "EXPLORE"
+                        else "content"
+                    ),
                 )
                 response = self._response(result)
                 if self._execution.intent == "EXPLORE":
-                    queue.put_nowait(ChatTextDelta(delta=response.message))
+                    queue.put_nowait(
+                        ChatTextDelta(delta=response.message, segment="content")
+                    )
                 queue.put_nowait(response)
             except asyncio.CancelledError:
                 raise
@@ -519,6 +537,7 @@ class ChatAgent:
                 queue.put_nowait(_stream_exception(exc))
             finally:
                 self._execution.event_sink = None
+                self._execution.flush_buffered_text = None
                 try:
                     model.cleanup()
                 finally:

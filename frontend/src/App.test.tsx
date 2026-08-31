@@ -190,7 +190,6 @@ describe("Sherlock application", () => {
     render(<App />);
     await user.type(screen.getByLabelText("Ask Sherlock"), "Stream this{enter}");
 
-    act(() => stream.enqueue(streamEvent("text_delta", { delta: "I will investigate this." })));
     act(() =>
       stream.enqueue(
         streamEvent("tool_call", {
@@ -203,6 +202,11 @@ describe("Sherlock application", () => {
     );
     act(() =>
       stream.enqueue(
+        streamEvent("text_delta", { delta: "I will investigate this.", segment: "introduction" }),
+      ),
+    );
+    act(() =>
+      stream.enqueue(
         streamEvent("tool_result", {
           id: "call-1",
           message: "Analysis completed",
@@ -211,7 +215,12 @@ describe("Sherlock application", () => {
       ),
     );
     act(() => {
-      stream.enqueue(streamEvent("text_delta", { delta: "The result is ready. Any follow-up?" }));
+      stream.enqueue(
+        streamEvent("text_delta", {
+          delta: "The result is ready. Any follow-up?",
+          segment: "content",
+        }),
+      );
       stream.enqueue(
         streamEvent("complete", {
           ...chatResponse,

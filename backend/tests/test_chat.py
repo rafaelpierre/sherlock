@@ -310,14 +310,13 @@ def test_stream_translates_workflow_activity_and_text_without_raw_results() -> N
 
     events = asyncio.run(collect_stream(agent, "What is the fraud rate?"))
 
-    assert [name for name, _ in events] == [
+    assert [name for name, _ in events[:4]] == [
         "tool_call",
         "tool_call",
         "tool_result",
         "tool_result",
-        "text_delta",
-        "complete",
     ]
+    assert events[-1][0] == "complete"
     call = events[0][1]
     result = events[3][1]
     assert isinstance(call, ChatToolCall)
@@ -429,7 +428,7 @@ class NonExplorePreambleModelFactory:
         )
 
 
-def test_explore_stream_discards_coordinator_preamble_before_specialist_text() -> None:
+def test_explore_stream_emits_coordinator_preamble_before_activity() -> None:
     workflows = StubWorkflows()
     agent = ChatAgent(
         workflows,
@@ -444,12 +443,32 @@ def test_explore_stream_discards_coordinator_preamble_before_specialist_text() -
 
     events = asyncio.run(collect_stream(agent, "Explore fraud"))
 
+    assert [name for name, _ in events] == [
+        "text_delta",
+        "tool_call",
+        "tool_call",
+        "tool_result",
+        "tool_result",
+        "text_delta",
+        "text_delta",
+        "complete",
+    ]
     deltas = [
         payload.delta
         for name, payload in events
         if name == "text_delta" and isinstance(payload, ChatTextDelta)
     ]
-    assert deltas == ["Grounded analysis synthesis."]
+    assert deltas == [
+        "Coordinator preamble. ",
+        "Coordinator follow-up.",
+        "Grounded analysis synthesis.",
+    ]
+    segments = [
+        payload.segment
+        for name, payload in events
+        if name == "text_delta" and isinstance(payload, ChatTextDelta)
+    ]
+    assert segments == ["introduction", "introduction", "content"]
 
 
 def test_non_explore_stream_flushes_preamble_after_intent_selection() -> None:

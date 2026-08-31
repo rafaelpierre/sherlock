@@ -317,9 +317,9 @@ export default function App() {
               let updated = draft;
               if (event.type === "text_delta") {
                 updated =
-                  draft.activities && draft.activities.length > 0
-                    ? { ...draft, content: draft.content + event.delta }
-                    : { ...draft, intro: (draft.intro ?? "") + event.delta };
+                  event.segment === "introduction"
+                    ? { ...draft, intro: (draft.intro ?? "") + event.delta }
+                    : { ...draft, content: draft.content + event.delta };
               } else if (event.type === "tool_call") {
                 updated = {
                   ...draft,
