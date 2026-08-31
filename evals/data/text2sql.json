@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "id": "average-fraud-amount",
+      "question": "What is the average value of fraudulent transactions?"
+    },
+    {
+      "id": "online-fraud-rate",
+      "question": "What percentage of online transactions are fraudulent?"
+    },
+    {
+      "id": "fraud-rate-by-card-type",
+      "question": "Which card type has the highest fraud rate?"
+    },
+    {
+      "id": "fraud-cases-by-merchant-category",
+      "question": "Which merchant categories have the most fraud cases?"
+    },
+    {
+      "id": "dark-web-fraud-rate",
+      "question": "How does fraud rate differ for cards found on the dark web?"
+    },
+    {
+      "id": "fraud-credit-score",
+      "question": "What is the average credit score of users associated with fraud?"
+    },
+    {
+      "id": "fraud-value-by-transaction-type",
+      "question": "Which transaction type has the highest fraudulent transaction value?"
+    },
+    {
+      "id": "fraud-user-age",
+      "question": "What is the average age of users involved in fraud?"
+    },
+    {
+      "id": "fraud-by-hour",
+      "question": "At which hours of the day is fraud most common?"
+    },
+    {
+      "id": "fraud-by-credit-limit-ratio",
+      "question": "Does fraud rate increase with amount-to-credit-limit ratio?"
+    },
+    {
+      "id": "fraud-count-by-merchant",
+      "question": "Which merchants have the greatest number of fraudulent transactions?"
+    },
+    {
+      "id": "fraud-value-by-city",
+      "question": "Which cities have the highest fraudulent transaction value?"
+    },
+    {
+      "id": "fraud-rate-by-weekday",
+      "question": "How does fraud rate vary by day of week?"
+    },
+    {
+      "id": "fraud-with-errors",
+      "question": "What share of fraudulent transactions contain an error?"
+    },
+    {
+      "id": "common-fraud-error",
+      "question": "Which error is most common among fraudulent transactions?"
+    },
+    {
+      "id": "fraud-rate-by-entry-mode",
+      "question": "How does fraud rate compare between chip, swipe, and online transactions?"
+    },
+    {
+      "id": "monthly-fraud-value",
+      "question": "What is the monthly fraudulent transaction value?"
+    },
+    {
+      "id": "fraud-amount-distribution",
+      "question": "What is the distribution of confirmed fraudulent transaction amounts?"
+    },
+    {
+      "id": "fraud-loss-by-card-brand",
+      "question": "Which card brands have the largest fraud losses?"
+    },
+    {
+      "id": "unlabelled-transactions",
+      "question": "How many transactions are unlabelled?"
+    },
+    {
+      "id": "confirmed-label-fraud-rate",
+      "question": "What percentage of confirmed labels are fraud?"
+    },
+    {
+      "id": "fraud-rate-by-income-band",
+      "question": "Which user income bands have the highest fraud rate?"
+    },
+    {
+      "id": "card-age-by-fraud-status",
+      "question": "Does card age differ between fraudulent and non-fraudulent transactions?"
+    },
+    {
+      "id": "unique-fraud-users",
+      "question": "How many unique users have confirmed fraudulent transactions?"
+    },
+    {
+      "id": "largest-fraud-transactions",
+      "question": "What are the largest confirmed fraudulent transactions?"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+[project]
+name = "sherlock-evals"
+version = "0.1.0"
+description = "HTTP evaluation CLI for Sherlock"
+requires-python = ">=3.13"
+dependencies = [
+    "click>=8.2.1",
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+sherlock-text2sql-eval = "sherlock_evals.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sherlock_evals"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"data/text2sql.json" = "sherlock_evals/data/text2sql.json"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.12.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
