@@ -1,5 +1,19 @@
 # Sherlock evaluations
 
+## Package quality checks
+
+Changes under `evals/` run the path-scoped `Evals CI` workflow. Reproduce its
+locked lint, format, test, and coverage checks locally with:
+
+```bash
+cd evals
+uv sync --locked --dev
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest --cov=sherlock_evals --cov-report=term-missing \
+  --cov-fail-under=80
+```
+
 ## Text2SQL HTTP evaluation
 
 The Text2SQL CLI sends the questions in `data/text2sql.json` to a running
