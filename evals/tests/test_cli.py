@@ -30,6 +30,7 @@ def test_cli_posts_every_case_and_reports_success(tmp_path: Path, monkeypatch) -
     questions: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "http://localhost:8080/v1/query"
         question = json.loads(request.content)["question"]
         questions.append(question)
         return httpx.Response(

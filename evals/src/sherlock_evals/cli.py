@@ -71,7 +71,7 @@ def _response_error(response: httpx.Response, question: str) -> str | None:
 @click.option(
     "--base-url",
     envvar="SHERLOCK_BACKEND_URL",
-    default="http://localhost:8000",
+    default="http://localhost:8080",
     show_default=True,
     help="Sherlock backend base URL.",
 )
