@@ -182,7 +182,13 @@ class _ChatExecution:
             if succeeded
             else "This activity could not be completed."
         )
-        self.event_sink(ChatToolResult(id=activity_id, message=message))
+        self.event_sink(
+            ChatToolResult(
+                id=activity_id,
+                message=message,
+                outcome="succeeded" if succeeded else "failed",
+            )
+        )
 
     def fail_active_activities(self) -> None:
         for activity_id, tool_name in list(self.active_activities.items()):
@@ -318,10 +324,31 @@ def _strands_history(history: list[ConversationMessage]) -> list[Message]:
     return [
         cast(
             Message,
-            {"role": message.role, "content": [{"text": message.content}]},
+            {"role": message.role, "content": [{"text": _history_text(message)}]},
         )
         for message in history
     ]
+
+
+def _history_text(message: ConversationMessage) -> str:
+    """Render client-owned continuity context without recreating native tool calls."""
+
+    if not message.activities and message.outcome is None:
+        return message.content
+    activity_lines = [
+        (
+            "User-visible activity summaries from this assistant turn (context only; "
+            "they are not authoritative tool results):"
+        )
+    ]
+    activity_lines.extend(
+        f"- {activity.kind}: {activity.name}. {activity.message} "
+        f"Outcome: {activity.outcome}. {activity.result}"
+        for activity in message.activities
+    )
+    if message.outcome == "failed":
+        activity_lines.append("This assistant turn was interrupted before completion.")
+    return f"{message.content}\n\n" + "\n".join(activity_lines)
 
 
 class ChatAgent:

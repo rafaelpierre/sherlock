@@ -10,7 +10,12 @@ import {
   newInvestigation,
   saveInvestigation,
 } from "./store";
-import type { Investigation, StreamActivity, TranscriptMessage } from "./types";
+import type {
+  ConversationMessage,
+  Investigation,
+  StreamActivity,
+  TranscriptMessage,
+} from "./types";
 import "./styles.css";
 
 const suggestions = [
@@ -116,6 +121,7 @@ function Activity({ message }: { message: string }) {
 function StreamActivityView({ activity }: { activity: StreamActivity }) {
   const [open, setOpen] = useState(!activity.result);
   const completed = Boolean(activity.result);
+  const status = activity.outcome === "failed" ? "Failed" : completed ? "Complete" : "Running";
 
   useEffect(() => {
     if (completed) setOpen(false);
@@ -130,7 +136,7 @@ function StreamActivityView({ activity }: { activity: StreamActivity }) {
       <summary>
         <span>{activity.kind === "agent_handoff" ? "Agent handoff" : "Tool call"}</span>
         <strong>{activity.name}</strong>
-        <small>{completed ? "Complete" : "Running"}</small>
+        <small>{status}</small>
       </summary>
       <p>{activity.message}</p>
       {activity.result && <div className="stream-result">{activity.result}</div>}
@@ -172,21 +178,28 @@ function Message({
             ))}
           </div>
         )}
-        {message.content && (
-          <div className="prose">
-            <Markdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                table: ({ children }) => (
-                  <div className="table-scroll markdown-table">
-                    <table>{children}</table>
-                  </div>
-                ),
-              }}
-            >
-              {message.content}
-            </Markdown>
+        {message.outcome === "failed" ? (
+          <div className="error" role="alert">
+            <strong>Something interrupted the investigation</strong>
+            <span>{message.content}</span>
           </div>
+        ) : (
+          message.content && (
+            <div className="prose">
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  table: ({ children }) => (
+                    <div className="table-scroll markdown-table">
+                      <table>{children}</table>
+                    </div>
+                  ),
+                }}
+              >
+                {message.content}
+              </Markdown>
+            </div>
+          )
         )}
       </div>
     </article>
@@ -233,9 +246,30 @@ export default function App() {
     }
     const requestId = ++requestGeneration.current;
     const draftId = `stream-${requestId}`;
+    const userId = crypto.randomUUID();
     const controller = new AbortController();
     currentRequest.current = controller;
-    const history = investigation.messages.map(({ role, content }) => ({ role, content }));
+    const history: ConversationMessage[] = investigation.messages.map(
+      ({ role, content, activities, outcome }) =>
+        role === "user"
+          ? { role, content }
+          : {
+              role,
+              content,
+              ...(activities && {
+                activities: activities.map(
+                  ({ kind, name, message: activityMessage, result, outcome: activityOutcome }) => ({
+                    kind,
+                    name,
+                    message: activityMessage,
+                    result: result ?? "This activity could not be completed.",
+                    outcome: activityOutcome ?? "failed",
+                  }),
+                ),
+              }),
+              ...(outcome && { outcome }),
+            },
+    );
     setInput("");
     setError(null);
     setPending(true);
@@ -245,7 +279,7 @@ export default function App() {
       title: current.title ?? message,
       messages: [
         ...current.messages,
-        { id: crypto.randomUUID(), role: "user" as const, content: message },
+        { id: userId, role: "user" as const, content: message },
       ].slice(-20),
     }));
     try {
@@ -276,7 +310,9 @@ export default function App() {
                 updated = {
                   ...draft,
                   activities: (draft.activities ?? []).map((activity) =>
-                    activity.id === event.id ? { ...activity, result: event.message } : activity,
+                    activity.id === event.id
+                      ? { ...activity, result: event.message, outcome: event.outcome }
+                      : activity,
                   ),
                 };
               }
@@ -300,6 +336,7 @@ export default function App() {
           artifacts: response.artifacts,
           intent: response.metadata.intent,
           activities: draftIndex === -1 ? undefined : current.messages[draftIndex].activities,
+          outcome: "complete",
         };
         const messages = [...current.messages];
         if (draftIndex === -1) messages.push(completed);
@@ -313,14 +350,40 @@ export default function App() {
       shouldPersist.current = true;
     } catch (reason) {
       if (requestId !== requestGeneration.current) return;
+      const failure =
+        reason instanceof Error ? reason.message : "Sherlock encountered an unexpected error.";
       setInvestigation((current) => ({
         ...current,
-        title: investigation.title,
-        messages: investigation.messages,
+        messages: (() => {
+          const messages = [...current.messages];
+          if (!messages.some(({ id }) => id === userId)) {
+            messages.push({ id: userId, role: "user", content: message });
+          }
+          const draftIndex = messages.findIndex(({ id }) => id === draftId);
+          const previousActivities =
+            draftIndex === -1 ? [] : (messages[draftIndex].activities ?? []);
+          const activities = previousActivities.map((activity) =>
+            activity.result
+              ? activity
+              : {
+                  ...activity,
+                  result: "This activity could not be completed.",
+                  outcome: "failed" as const,
+                },
+          );
+          const failed: TranscriptMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: failure,
+            activities: activities.length > 0 ? activities : undefined,
+            outcome: "failed",
+          };
+          if (draftIndex === -1) messages.push(failed);
+          else messages[draftIndex] = failed;
+          return messages.slice(-20);
+        })(),
       }));
-      setError(
-        reason instanceof Error ? reason.message : "Sherlock encountered an unexpected error.",
-      );
+      shouldPersist.current = true;
     } finally {
       if (requestId === requestGeneration.current) {
         currentRequest.current = null;

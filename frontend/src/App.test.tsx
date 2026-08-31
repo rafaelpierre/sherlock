@@ -149,7 +149,13 @@ describe("Sherlock application", () => {
     expect(activity).toHaveTextContent("Running");
 
     act(() =>
-      stream.enqueue(streamEvent("tool_result", { id: "call-1", message: "Analysis completed" })),
+      stream.enqueue(
+        streamEvent("tool_result", {
+          id: "call-1",
+          message: "Analysis completed",
+          outcome: "succeeded",
+        }),
+      ),
     );
     await waitFor(() => expect(activity).not.toHaveAttribute("open"));
     expect(activity).toHaveTextContent("Complete");
@@ -168,7 +174,7 @@ describe("Sherlock application", () => {
     );
   });
 
-  it("rolls back a partial assistant turn when the stream closes early", async () => {
+  it("persists a failed streamed turn with its activity summaries", async () => {
     const user = userEvent.setup();
     let stream!: ReadableStreamDefaultController<Uint8Array>;
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -184,6 +190,16 @@ describe("Sherlock application", () => {
     render(<App />);
     await user.type(screen.getByLabelText("Ask Sherlock"), "Interrupted stream{enter}");
     act(() => stream.enqueue(streamEvent("text_delta", { delta: "Partial answer" })));
+    act(() =>
+      stream.enqueue(
+        streamEvent("tool_call", {
+          id: "call-1",
+          kind: "agent_handoff",
+          name: "Transaction analysis",
+          message: "Sherlock is investigating the transaction data.",
+        }),
+      ),
+    );
     expect(await screen.findByText("Partial answer")).toBeInTheDocument();
 
     act(() => stream.close());
@@ -193,8 +209,24 @@ describe("Sherlock application", () => {
     );
     expect(screen.queryByText("Partial answer")).not.toBeInTheDocument();
     expect(
-      screen.queryByText("Interrupted stream", { selector: ".user-message p" }),
-    ).not.toBeInTheDocument();
+      screen.getByText("Interrupted stream", { selector: ".user-message p" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Transaction analysis")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+        version: STORAGE_VERSION,
+        messages: [
+          { role: "user", content: "Interrupted stream" },
+          {
+            role: "assistant",
+            content: "Sherlock returned an invalid response. Please try again.",
+            outcome: "failed",
+            activities: [{ name: "Transaction analysis", outcome: "failed" }],
+          },
+        ],
+      }),
+    );
   });
 
   it("renders GitHub-flavored Markdown tables in assistant messages", () => {
@@ -258,8 +290,6 @@ describe("Sherlock application", () => {
     await user.type(screen.getByLabelText("Ask Sherlock"), "Backtest it{enter}");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Candidate state is missing.");
-    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(storedInvestigation([])));
     await user.click(screen.getByRole("button", { name: "New investigation" }));
     expect(
@@ -278,17 +308,16 @@ describe("Sherlock application", () => {
     await user.type(screen.getByLabelText("Ask Sherlock"), "Failed question{enter}");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Temporary failure");
-    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
     await user.type(screen.getByLabelText("Ask Sherlock"), "Successful question{enter}");
 
-    expect(await screen.findByRole("heading", { name: "Successful question" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Failed question" })).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).messages[0]).toEqual({
       role: "user",
-      content: "Successful question",
+      content: "Failed question",
     });
   });
 
-  it("rolls back a malformed success response and retries from the last valid state", async () => {
+  it("retains a malformed response as a safe failed turn for retry", async () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify(
@@ -311,19 +340,24 @@ describe("Sherlock application", () => {
     await user.type(screen.getByLabelText("Ask Sherlock"), "Malformed turn{enter}");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Sherlock returned an invalid response");
-    expect(
-      screen.queryByText("Malformed turn", { selector: ".user-message p" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByText("Malformed turn", { selector: ".user-message p" })).toBeInTheDocument();
     expect(screen.getByText("Existing answer")).toBeInTheDocument();
 
-    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
     await user.type(screen.getByLabelText("Ask Sherlock"), "Retry{enter}");
     await screen.findByText("I found a concentrated pattern.");
     const retryPayload = JSON.parse(
       String((vi.mocked(fetch).mock.calls[1][1] as RequestInit).body),
     );
     expect(retryPayload.working_state).toEqual({ last_sql: "SELECT 1" });
-    expect(retryPayload.history).toEqual([{ role: "assistant", content: "Existing answer" }]);
+    expect(retryPayload.history).toEqual([
+      { role: "assistant", content: "Existing answer" },
+      { role: "user", content: "Malformed turn" },
+      {
+        role: "assistant",
+        content: "Sherlock returned an invalid response. Please try again.",
+        outcome: "failed",
+      },
+    ]);
   });
 
   it("discards an in-flight response when starting a new investigation", async () => {
@@ -353,7 +387,7 @@ describe("Sherlock application", () => {
     ).toBeInTheDocument();
   });
 
-  it("rolls failed turns out of bounded retry history", async () => {
+  it("retains failed turns in bounded retry history", async () => {
     const messages = Array.from({ length: 20 }, (_, index) => ({
       id: `message-${index}`,
       role: (index % 2 ? "assistant" : "user") as "user" | "assistant",
@@ -368,20 +402,17 @@ describe("Sherlock application", () => {
     await user.type(screen.getByLabelText("Ask Sherlock"), "Failed turn{enter}");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Temporary failure");
-    expect(screen.getByText("Bounded 0", { selector: ".user-message p" })).toBeInTheDocument();
-    expect(
-      screen.queryByText("Failed turn", { selector: ".user-message p" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByText("Failed turn", { selector: ".user-message p" })).toBeInTheDocument();
 
-    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
     await user.type(screen.getByLabelText("Ask Sherlock"), "Retry{enter}");
     await screen.findByText("I found a concentrated pattern.");
     const retryPayload = JSON.parse(
       String((vi.mocked(fetch).mock.calls[1][1] as RequestInit).body),
     );
     expect(retryPayload.history).toHaveLength(20);
-    expect(retryPayload.history).not.toContainEqual(
-      expect.objectContaining({ content: "Failed turn" }),
+    expect(retryPayload.history).toContainEqual({ role: "user", content: "Failed turn" });
+    expect(retryPayload.history).toContainEqual(
+      expect.objectContaining({ role: "assistant", outcome: "failed" }),
     );
   });
 
@@ -407,5 +438,60 @@ describe("Sherlock application", () => {
     const payload = JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body));
     expect(payload.history).toHaveLength(20);
     expect(payload.working_state.last_sql).toBe("SELECT 1");
+  });
+
+  it("sends persisted failed activity context with a later try-again turn", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: STORAGE_VERSION,
+        conversation_id: SAVED_CONVERSATION_ID,
+        messages: [
+          { role: "user", content: "Explore further" },
+          {
+            role: "assistant",
+            content: "Sherlock could not complete the request. Please try again.",
+            outcome: "failed",
+            activities: [
+              {
+                kind: "agent_handoff",
+                name: "Transaction analysis",
+                message: "Sherlock is investigating the transaction data.",
+                result: "This activity could not be completed.",
+                outcome: "failed",
+              },
+            ],
+          },
+        ],
+        working_state: {},
+      }),
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ ...chatResponse, artifacts: [] }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(screen.getByText("Transaction analysis")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Ask Sherlock"), "try again{enter}");
+
+    const payload = JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body));
+    expect(payload.history).toEqual([
+      { role: "user", content: "Explore further" },
+      {
+        role: "assistant",
+        content: "Sherlock could not complete the request. Please try again.",
+        outcome: "failed",
+        activities: [
+          {
+            kind: "agent_handoff",
+            name: "Transaction analysis",
+            message: "Sherlock is investigating the transaction data.",
+            result: "This activity could not be completed.",
+            outcome: "failed",
+          },
+        ],
+      },
+    ]);
   });
 });

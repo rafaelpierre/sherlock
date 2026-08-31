@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class QueryRequest(BaseModel):
@@ -186,6 +186,21 @@ class StoredBacktest(BaseModel):
 
 
 MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_ACTIVITIES = 50
+MAX_HISTORY_ACTIVITY_NAME_LENGTH = 200
+MAX_HISTORY_ACTIVITY_MESSAGE_LENGTH = 2_000
+
+
+class ConversationActivity(BaseModel):
+    """One completed, user-safe activity summary retained in client history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["tool_call", "agent_handoff"]
+    name: str = Field(min_length=1, max_length=MAX_HISTORY_ACTIVITY_NAME_LENGTH)
+    message: str = Field(min_length=1, max_length=MAX_HISTORY_ACTIVITY_MESSAGE_LENGTH)
+    result: str = Field(min_length=1, max_length=MAX_HISTORY_ACTIVITY_MESSAGE_LENGTH)
+    outcome: Literal["succeeded", "failed"]
 
 
 class ConversationMessage(BaseModel):
@@ -195,6 +210,10 @@ class ConversationMessage(BaseModel):
 
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=10_000)
+    activities: list[ConversationActivity] = Field(
+        default_factory=list, max_length=MAX_HISTORY_ACTIVITIES
+    )
+    outcome: Literal["complete", "failed"] | None = None
 
     @field_validator("content")
     @classmethod
@@ -203,6 +222,12 @@ class ConversationMessage(BaseModel):
         if not value:
             raise ValueError("message content must not be blank")
         return value
+
+    @model_validator(mode="after")
+    def user_messages_cannot_claim_assistant_context(self) -> ConversationMessage:
+        if self.role == "user" and (self.activities or self.outcome is not None):
+            raise ValueError("user messages cannot contain assistant activity context")
+        return self
 
 
 class WorkingState(BaseModel):

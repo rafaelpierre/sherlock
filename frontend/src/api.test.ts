@@ -87,7 +87,7 @@ describe("chat API", () => {
         name: "Text2SQL",
         message: "Querying transactions",
       }),
-      event("tool_result", { id: "call-1", message: "Found 2 rows" }),
+      event("tool_result", { id: "call-1", message: "Found 2 rows", outcome: "succeeded" }),
       event("text_delta", { delta: "linked" }),
       event("complete", chatResponse),
     ].join("");
@@ -112,7 +112,7 @@ describe("chat API", () => {
         name: "Text2SQL",
         message: "Querying transactions",
       },
-      { type: "tool_result", id: "call-1", message: "Found 2 rows" },
+      { type: "tool_result", id: "call-1", message: "Found 2 rows", outcome: "succeeded" },
       { type: "text_delta", delta: "linked" },
     ]);
   });
@@ -121,7 +121,10 @@ describe("chat API", () => {
     ["closes before completion", event("text_delta", { delta: "Partial" })],
     ["contains malformed JSON", "event: text_delta\ndata: {broken}\n\n"],
     ["contains an unknown event", event("future_event", { value: true })],
-    ["returns a result without a call", event("tool_result", { id: "missing", message: "Done" })],
+    [
+      "returns a result without a call",
+      event("tool_result", { id: "missing", message: "Done", outcome: "succeeded" }),
+    ],
     [
       "completes with an active call",
       event("tool_call", {
@@ -204,7 +207,7 @@ describe("chat API", () => {
           name: "Text2SQL",
           message: "Querying transactions",
         }),
-        event("tool_result", { id: `call-${index}`, message: "Done" }),
+        event("tool_result", { id: `call-${index}`, message: "Done", outcome: "succeeded" }),
       ].join(""),
     ).join("");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(eventStreamResponse([activities]));

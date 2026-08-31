@@ -82,10 +82,57 @@ describe("investigation persistence", () => {
     expect(restored.messages[0].id).toBeTruthy();
   });
 
+  it("migrates v1 prose history and round-trips bounded activity failures", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...storedPayload(),
+        version: 1,
+        messages: [{ role: "user", content: "Explore further" }],
+      }),
+    );
+    const investigation = loadInvestigation();
+    investigation.messages.push({
+      id: "failed-turn",
+      role: "assistant",
+      content: "Sherlock could not complete the request. Please try again.",
+      outcome: "failed",
+      activities: [
+        {
+          id: "activity-1",
+          type: "tool_call",
+          kind: "agent_handoff",
+          name: "Transaction analysis",
+          message: "Sherlock is investigating the transaction data.",
+          result: "This activity could not be completed.",
+          outcome: "failed",
+        },
+      ],
+      artifacts: [{ type: "table", columns: ["raw"], rows: [[1]], row_count: 1, truncated: false }],
+    });
+
+    saveInvestigation(investigation);
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    expect(stored).toMatchObject({
+      version: STORAGE_VERSION,
+      messages: [
+        { role: "user", content: "Explore further" },
+        {
+          role: "assistant",
+          outcome: "failed",
+          activities: [{ name: "Transaction analysis", outcome: "failed" }],
+        },
+      ],
+    });
+    expect(JSON.stringify(stored)).not.toContain('"artifacts"');
+    expect(JSON.stringify(stored)).not.toContain('"rows"');
+  });
+
   it.each([
     ["malformed JSON", "not json"],
     ["missing fields", JSON.stringify({ version: STORAGE_VERSION })],
-    ["an incompatible version", JSON.stringify(storedPayload({ version: 2 }))],
+    ["an incompatible version", JSON.stringify(storedPayload({ version: 3 }))],
     ["an incompatible shape", JSON.stringify(storedPayload({ unexpected: true }))],
     [
       "raw artifacts attached to a message",

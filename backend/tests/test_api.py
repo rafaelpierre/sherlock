@@ -189,7 +189,9 @@ class StubChatAgent:
         yield (
             "tool_result",
             ChatToolResult(
-                id="activity-1", message="The candidate rule is ready for review."
+                id="activity-1",
+                message="The candidate rule is ready for review.",
+                outcome="succeeded",
             ),
         )
         yield "text_delta", ChatTextDelta(delta=response.message)
@@ -224,7 +226,9 @@ class MissingStateChatAgent:
         yield (
             "tool_result",
             ChatToolResult(
-                id="activity-1", message="The historical test could not start."
+                id="activity-1",
+                message="The historical test could not start.",
+                outcome="failed",
             ),
         )
         raise MissingChatState("BACKTEST_RULE", ["candidate_rule"])
@@ -267,7 +271,9 @@ class InvalidStateChatAgent:
         yield (
             "tool_result",
             ChatToolResult(
-                id="activity-1", message="This activity could not be completed."
+                id="activity-1",
+                message="This activity could not be completed.",
+                outcome="failed",
             ),
         )
         await self.respond(message)
@@ -331,6 +337,43 @@ def test_chat_endpoint_returns_artifacts_authoritative_state_and_metadata() -> N
     }
     assert len(factory.history) == 20
     assert factory.history[0].content == "message 3"
+
+
+def test_chat_endpoint_accepts_user_safe_failed_activity_history() -> None:
+    app = create_app()
+    factory = StubChatAgentFactory()
+    app.dependency_overrides[get_chat_agent_factory] = lambda: factory
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={
+                "conversation_id": "3b621bd5-98dd-4be0-b713-89b1ac751fab",
+                "message": "Create a high-value rule",
+                "history": [
+                    {"role": "user", "content": "Explore further"},
+                    {
+                        "role": "assistant",
+                        "content": "Sherlock could not complete the request. Please try again.",
+                        "outcome": "failed",
+                        "activities": [
+                            {
+                                "kind": "agent_handoff",
+                                "name": "Transaction analysis",
+                                "message": "Sherlock is investigating the transaction data.",
+                                "result": "This activity could not be completed.",
+                                "outcome": "failed",
+                            }
+                        ],
+                    },
+                ],
+                "working_state": {},
+            },
+        )
+
+    assert response.status_code == 200
+    assert factory.history[1].outcome == "failed"
+    assert factory.history[1].activities[0].name == "Transaction analysis"
 
 
 def test_chat_endpoint_streams_translated_events_and_authoritative_completion() -> None:
