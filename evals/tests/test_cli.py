@@ -91,6 +91,39 @@ def test_cli_continues_after_a_failed_response(tmp_path: Path, monkeypatch) -> N
     assert "1/2 cases passed" in result.output
 
 
+def test_cli_normalizes_case_values(tmp_path: Path, monkeypatch) -> None:
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(
+        json.dumps({"cases": [{"id": " case ", "question": " How many? "}]}),
+        encoding="utf-8",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        question = json.loads(request.content)["question"]
+        assert question == "How many?"
+        return httpx.Response(
+            200,
+            json={
+                "question": question,
+                "sql": "SELECT 1",
+                "result": {"columns": ["value"], "rows": [[1]]},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: original_client(transport=transport, **kwargs),
+    )
+
+    result = CliRunner().invoke(main, ["--cases", str(cases_path)])
+
+    assert result.exit_code == 0
+    assert "PASS case" in result.output
+
+
 def test_cli_rejects_duplicate_case_ids(tmp_path: Path) -> None:
     cases_path = tmp_path / "cases.json"
     cases_path.write_text(

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any
 
 import click
 import httpx
 
-DEFAULT_CASES = Path(__file__).parents[2] / "data" / "text2sql.json"
+SOURCE_CASES = Path(__file__).parents[2] / "data" / "text2sql.json"
 
 
 def _load_cases(path: Path) -> list[dict[str, str]]:
@@ -31,17 +32,27 @@ def _load_cases(path: Path) -> list[dict[str, str]]:
     for index, case in enumerate(cases, start=1):
         if not isinstance(case, dict):
             raise click.ClickException(f"Case {index} must be an object")
-        case_id = case.get("id")
-        question = case.get("question")
-        if not isinstance(case_id, str) or not case_id.strip():
+        raw_case_id = case.get("id")
+        raw_question = case.get("question")
+        if not isinstance(raw_case_id, str) or not raw_case_id.strip():
             raise click.ClickException(f"Case {index} must have a non-empty string id")
+        case_id = raw_case_id.strip()
         if case_id in seen_ids:
             raise click.ClickException(f"Duplicate case id: {case_id}")
-        if not isinstance(question, str) or not question.strip():
+        if not isinstance(raw_question, str) or not raw_question.strip():
             raise click.ClickException(f"Case {case_id} must have a non-empty question")
+        question = raw_question.strip()
         seen_ids.add(case_id)
         validated.append({"id": case_id, "question": question})
     return validated
+
+
+def _load_default_cases() -> list[dict[str, str]]:
+    if SOURCE_CASES.is_file():
+        return _load_cases(SOURCE_CASES)
+    resource = files("sherlock_evals").joinpath("data/text2sql.json")
+    with as_file(resource) as path:
+        return _load_cases(path)
 
 
 def _response_error(response: httpx.Response, question: str) -> str | None:
@@ -79,8 +90,8 @@ def _response_error(response: httpx.Response, question: str) -> str | None:
     "--cases",
     "cases_path",
     type=click.Path(path_type=Path, dir_okay=False),
-    default=DEFAULT_CASES,
-    show_default=True,
+    default=None,
+    show_default="bundled data/text2sql.json",
     help="JSON file containing Text2SQL evaluation cases.",
 )
 @click.option(
@@ -90,10 +101,10 @@ def _response_error(response: httpx.Response, question: str) -> str | None:
     show_default=True,
     help="Timeout for each backend request in seconds.",
 )
-def main(base_url: str, cases_path: Path, timeout: float) -> None:
+def main(base_url: str, cases_path: Path | None, timeout: float) -> None:
     """Run every Text2SQL case against POST /v1/query."""
 
-    cases = _load_cases(cases_path)
+    cases = _load_cases(cases_path) if cases_path else _load_default_cases()
     failures = 0
     with httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout) as client:
         for case in cases:
