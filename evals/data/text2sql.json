@@ -1,104 +1,205 @@
 {
+  "schema_version": 2,
+  "dataset": "mcp/db/data/data.db",
   "cases": [
     {
       "id": "average-fraud-amount",
-      "question": "What is the average value of fraudulent transactions?"
+      "question": "What is the average value of fraudulent transactions?",
+      "expected": {"columns": ["average_fraud_amount_usd"], "rows": [[85.590875]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "online-fraud-rate",
-      "question": "What percentage of online transactions are fraudulent?"
+      "question": "What percentage of online transactions are fraudulent?",
+      "expected": {"columns": ["online_fraud_rate_percent"], "rows": [[0.0]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-rate-by-card-type",
-      "question": "Which card type has the highest fraud rate?"
+      "question": "Which card type has the highest fraud rate?",
+      "expected": {"columns": ["card_type", "fraud_rate_percent"], "rows": [["Credit", 0.23681504829004366]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-cases-by-merchant-category",
-      "question": "Which merchant categories have the most fraud cases?"
+      "question": "Which merchant categories have the most fraud cases?",
+      "expected": {
+        "columns": ["merchant_category", "fraud_cases"],
+        "rows": [
+          ["Department Stores", 290],
+          ["Grocery Stores, Supermarkets", 130],
+          ["Discount Stores", 101],
+          ["Service Stations", 78],
+          ["Family Clothing Stores", 67],
+          ["Drug Stores and Pharmacies", 55],
+          ["Taxicabs and Limousines", 50],
+          ["Lumber and Building Materials", 47],
+          ["Miscellaneous Food Stores", 45],
+          ["Precious Stones and Metals", 43]
+        ]
+      },
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": ["null", "n/a"]}
     },
     {
       "id": "dark-web-fraud-rate",
-      "question": "How does fraud rate differ for cards found on the dark web?"
+      "question": "How does fraud rate differ for cards found on the dark web?",
+      "expected": {"columns": ["card_on_dark_web", "fraud_rate_percent"], "rows": [[0, 0.1749558429462564]]},
+      "comparison": {"row_order": "insensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-credit-score",
-      "question": "What is the average credit score of users associated with fraud?"
+      "question": "What is the average credit score of users associated with fraud?",
+      "expected": {"columns": ["average_credit_score"], "rows": [[717.072794117647]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-value-by-transaction-type",
-      "question": "Which transaction type has the highest fraudulent transaction value?"
+      "question": "Which transaction type has the highest fraudulent transaction value?",
+      "expected": {"columns": ["transaction_type", "fraud_value_usd"], "rows": [["Chip Transaction", 109405.42]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-user-age",
-      "question": "What is the average age of users involved in fraud?"
+      "question": "What is the average age of users involved in fraud?",
+      "expected": {"columns": ["average_user_age_years"], "rows": [[55.81470588235294]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-by-hour",
-      "question": "At which hours of the day is fraud most common?"
+      "question": "At which hours of the day is fraud most common?",
+      "expected": {
+        "columns": ["transaction_hour", "fraud_cases"],
+        "rows": [[11, 156], [14, 153], [13, 147], [18, 145], [16, 142], [12, 135], [15, 135], [17, 133], [19, 127], [10, 81]]
+      },
+      "comparison": {"row_order": "ranked", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": [], "rank_by": [{"column": "fraud_cases", "direction": "descending"}]}
     },
     {
       "id": "fraud-by-credit-limit-ratio",
-      "question": "Does fraud rate increase with amount-to-credit-limit ratio?"
+      "question": "Does fraud rate increase with amount-to-credit-limit ratio?",
+      "expected": {
+        "columns": ["ratio_band", "fraud_rate_percent"],
+        "rows": [
+          ["under-1-percent", 0.15310266280383256],
+          ["1-to-5-percent", 0.2950700791437966],
+          ["5-to-10-percent", 0.2742409402546523],
+          ["10-percent-or-more", 0.26139000855014044]
+        ]
+      },
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-count-by-merchant",
-      "question": "Which merchants have the greatest number of fraudulent transactions?"
+      "question": "Which merchants have the greatest number of fraudulent transactions?",
+      "expected": {
+        "columns": ["merchant_name", "fraud_cases"],
+        "rows": [["Merchant 83018", 101], ["Merchant 48919", 94], ["Merchant 99370", 78], ["Merchant 88260", 74], ["Merchant 31893", 62], ["Merchant 46284", 56], ["Merchant 67570", 56], ["Merchant 41375", 55], ["Merchant 80114", 50], ["Merchant 53492", 43]]
+      },
+      "comparison": {"row_order": "ranked", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": [], "rank_by": [{"column": "fraud_cases", "direction": "descending"}]}
     },
     {
       "id": "fraud-value-by-city",
-      "question": "Which cities have the highest fraudulent transaction value?"
+      "question": "Which cities have the highest fraudulent transaction value?",
+      "expected": {"columns": ["merchant_city", "fraud_value_usd"], "rows": [["Rome", 116403.59]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-rate-by-weekday",
-      "question": "How does fraud rate vary by day of week?"
+      "question": "How does fraud rate vary by day of week?",
+      "expected": {
+        "columns": ["transaction_day_of_week", "fraud_rate_percent"],
+        "rows": [[0, 0.002662288680835959], [1, 0.0035027803318884365], [2, 0.32657386445739606], [3, 0.0066862797539449055], [4, 0.2851242882692956], [5, 0.2983941451184307], [6, 0.300132802124834]]
+      },
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-with-errors",
-      "question": "What share of fraudulent transactions contain an error?"
+      "question": "What share of fraudulent transactions contain an error?",
+      "expected": {"columns": ["fraud_with_error_percent"], "rows": [[3.3088235294117645]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "common-fraud-error",
-      "question": "Which error is most common among fraudulent transactions?"
+      "question": "Which error is most common among fraudulent transactions?",
+      "expected": {"columns": ["errors", "fraud_cases"], "rows": [["Bad PIN", 32]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": []}
     },
     {
       "id": "fraud-rate-by-entry-mode",
-      "question": "How does fraud rate compare between chip, swipe, and online transactions?"
+      "question": "How does fraud rate compare between chip, swipe, and online transactions?",
+      "expected": {
+        "columns": ["transaction_type", "fraud_rate_percent"],
+        "rows": [["Chip Transaction", 0.22431396707766735], ["Online Transaction", 0.0], ["Swipe Transaction", 0.09268263036343746]]
+      },
+      "comparison": {"row_order": "insensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "monthly-fraud-value",
-      "question": "What is the monthly fraudulent transaction value?"
+      "question": "What is the monthly fraudulent transaction value?",
+      "expected": {
+        "columns": ["month", "fraud_value_usd"],
+        "rows": [["2019-01", 10703.52], ["2019-02", 8398.68], ["2019-03", 11097.2], ["2019-04", 12588.89], ["2019-05", 17129.41], ["2019-06", 10475.6], ["2019-07", 7170.81], ["2019-08", 13121.19], ["2019-09", 8291.47], ["2019-10", 17426.82]]
+      },
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-amount-distribution",
-      "question": "What is the distribution of confirmed fraudulent transaction amounts?"
+      "question": "What is the distribution of confirmed fraudulent transaction amounts?",
+      "expected": {
+        "columns": ["amount_band_usd", "fraud_cases"],
+        "rows": [["under-10", 357], ["10-to-50", 409], ["50-to-100", 252], ["100-to-500", 305], ["500-or-more", 37]]
+      },
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": []}
     },
     {
       "id": "fraud-loss-by-card-brand",
-      "question": "Which card brands have the largest fraud losses?"
+      "question": "Which card brands have the largest fraud losses?",
+      "expected": {
+        "columns": ["card_brand", "fraud_value_usd"],
+        "rows": [["Mastercard", 56223.62], ["Visa", 46945.09], ["Discover", 6770.16], ["Amex", 6464.72]]
+      },
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "unlabelled-transactions",
-      "question": "How many transactions are unlabelled?"
+      "question": "How many transactions are unlabelled?",
+      "expected": {"columns": ["unlabelled_transactions"], "rows": [[382627]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": []}
     },
     {
       "id": "confirmed-label-fraud-rate",
-      "question": "What percentage of confirmed labels are fraud?"
+      "question": "What percentage of confirmed labels are fraud?",
+      "expected": {"columns": ["confirmed_fraud_rate_percent"], "rows": [[0.1749558429462564]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "fraud-rate-by-income-band",
-      "question": "Which user income bands have the highest fraud rate?"
+      "question": "Which user income bands have the highest fraud rate?",
+      "expected": {
+        "columns": ["income_band_usd", "fraud_rate_percent"],
+        "rows": [["100000-or-more", 0.3141401371489867], ["under-25000", 0.2482109470698214], ["25000-to-50000", 0.17073434882046773], ["75000-to-100000", 0.16438765598146904], ["50000-to-75000", 0.14258768581308662]]
+      },
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0001, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "card-age-by-fraud-status",
-      "question": "Does card age differ between fraudulent and non-fraudulent transactions?"
+      "question": "Does card age differ between fraudulent and non-fraudulent transactions?",
+      "expected": {"columns": ["is_fraud", "average_card_age_days"], "rows": [[1, 3866.556617647059], [0, 3892.3128383628937]]},
+      "comparison": {"row_order": "insensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     },
     {
       "id": "unique-fraud-users",
-      "question": "How many unique users have confirmed fraudulent transactions?"
+      "question": "How many unique users have confirmed fraudulent transactions?",
+      "expected": {"columns": ["unique_fraud_users"], "rows": [[223]]},
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": []}
     },
     {
       "id": "largest-fraud-transactions",
-      "question": "What are the largest confirmed fraudulent transactions?"
+      "question": "What are the largest confirmed fraudulent transactions?",
+      "expected": {
+        "columns": ["transaction_id", "transaction_datetime", "amount_usd"],
+        "rows": [[23274539, "2019-07-20 15:09:00", 1244.41], [22343207, "2019-01-04 13:10:00", 1135.92], [23633565, "2019-10-04 14:45:00", 1111.01], [22337993, "2019-01-03 12:08:00", 958.3], [23496122, "2019-09-05 12:48:00", 909.4], [23651372, "2019-10-08 11:27:00", 902.46], [22975830, "2019-05-18 13:41:00", 900.44], [22575272, "2019-02-22 15:18:00", 887.35], [23070412, "2019-06-07 14:54:00", 878.03], [22773552, "2019-04-05 15:11:00", 866.75]]
+      },
+      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.01, "relative_tolerance": 0.000001, "null_equivalents": []}
     }
   ]
 }
