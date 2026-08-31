@@ -117,7 +117,7 @@ class StrandsSQLGenerator:
         return await asyncio.to_thread(self._invoke_agent, prompt)
 
     def _generate_uncached(self, question: str) -> str:
-        return self._invoke_agent(question)
+        return _require_bounded_sql(self._invoke_agent(question))
 
     def _invoke_agent(self, prompt: str) -> str:
         agent = create_sql_generation_agent(self._client, model=self._model)

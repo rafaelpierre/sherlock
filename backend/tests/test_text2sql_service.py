@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from strands.tools.mcp import MCPClient
 
 from sherlock.contracts import MAX_SQL_LENGTH
 from sherlock.services.text2sql import (
@@ -11,6 +12,7 @@ from sherlock.services.text2sql import (
     QueryData,
     QueryExecutionError,
     SQLGenerationError,
+    StrandsSQLGenerator,
     Text2SQLService,
 )
 
@@ -112,6 +114,32 @@ def test_oversized_generated_sql_is_rejected_before_execution() -> None:
         asyncio.run(service.query("Return one value"))
 
     assert executor.sql == []
+
+
+def test_oversized_initial_generation_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generator = StrandsSQLGenerator(cast(MCPClient, object()))
+    outputs = iter([sql_with_length(MAX_SQL_LENGTH + 1), "SELECT 1"])
+    calls = 0
+
+    def invoke_agent(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return next(outputs)
+
+    monkeypatch.setattr(generator, "_invoke_agent", invoke_agent)
+
+    with pytest.raises(SQLGenerationError, match="20,000 character limit"):
+        asyncio.run(generator.generate("Return one value"))
+
+    generated, first_cache_hit = asyncio.run(generator.generate("Return one value"))
+    cached, second_cache_hit = asyncio.run(generator.generate("Return one value"))
+
+    assert generated == cached == "SELECT 1"
+    assert first_cache_hit is False
+    assert second_cache_hit is True
+    assert calls == 2
 
 
 def test_oversized_normalized_sql_is_rejected_before_service_response() -> None:
