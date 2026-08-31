@@ -14,6 +14,7 @@ from strands.tools.mcp import MCPClient
 
 from sherlock.agent import SQLGeneration, create_sql_generation_agent
 from sherlock.config import Settings
+from sherlock.contracts import MAX_SQL_LENGTH
 
 GENERATOR_TOOLS = ("get_schema", "get_sample_values", "get_database_info")
 REPAIRABLE_ERRORS = frozenset(
@@ -34,6 +35,14 @@ class Text2SQLError(RuntimeError):
 
 class SQLGenerationError(Text2SQLError):
     """The model did not produce a usable SQL query."""
+
+
+def _require_bounded_sql(sql: str) -> str:
+    if len(sql) > MAX_SQL_LENGTH:
+        raise SQLGenerationError(
+            f"The generated SQL exceeds the {MAX_SQL_LENGTH:,} character limit."
+        )
+    return sql
 
 
 class QueryExecutionError(Text2SQLError):
@@ -108,7 +117,7 @@ class StrandsSQLGenerator:
         return await asyncio.to_thread(self._invoke_agent, prompt)
 
     def _generate_uncached(self, question: str) -> str:
-        return self._invoke_agent(question)
+        return _require_bounded_sql(self._invoke_agent(question))
 
     def _invoke_agent(self, prompt: str) -> str:
         agent = create_sql_generation_agent(self._client, model=self._model)
@@ -200,14 +209,20 @@ class Text2SQLService:
     async def query(self, question: str) -> dict[str, Any]:
         await self.start()
         sql, cached_sql = await self._generator.generate(question)
+        sql = _require_bounded_sql(sql)
 
         for attempt in range(1, self._max_attempts + 1):
             execution = await self._executor.execute(sql)
             if execution.data is not None:
+                try:
+                    normalized_sql = _require_bounded_sql(execution.sql)
+                except SQLGenerationError:
+                    self._clear_generator_cache()
+                    raise
                 return asdict(
                     Text2SQLResult(
                         question=question,
-                        sql=execution.sql,
+                        sql=normalized_sql,
                         result=execution.data,
                         attempts=attempt,
                         cached_sql=cached_sql,
@@ -220,15 +235,19 @@ class Text2SQLService:
                 message = error.get("message", "The generated query could not run.")
                 raise QueryExecutionError(str(message))
             sql = await self._generator.repair(question, sql, error)
+            sql = _require_bounded_sql(sql)
 
         raise AssertionError("unreachable")
 
     def close(self) -> None:
+        self._clear_generator_cache()
+        if self._close_callback is not None:
+            self._close_callback()
+
+    def _clear_generator_cache(self) -> None:
         clear_cache = getattr(self._generator, "clear_cache", None)
         if clear_cache is not None:
             clear_cache()
-        if self._close_callback is not None:
-            self._close_callback()
 
 
 def create_text2sql_service(

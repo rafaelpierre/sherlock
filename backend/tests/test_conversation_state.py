@@ -11,8 +11,10 @@ from sherlock.api.schemas import (
     ConversationActivity,
     ConversationMessage,
     ConversationState,
+    QueryResponse,
     WorkingState,
 )
+from sherlock.contracts import MAX_SQL_LENGTH
 
 CONVERSATION_ID = UUID("3b621bd5-98dd-4be0-b713-89b1ac751fab")
 EMPTY_METRICS = {
@@ -113,6 +115,55 @@ def test_conversation_state_round_trips_structured_referents() -> None:
     assert restored == state
     assert restored.working_state.last_backtest is not None
     assert restored.working_state.last_backtest.metrics.unlabelled_flagged == 1
+
+
+def test_successful_query_sql_is_compatible_with_working_state() -> None:
+    prefix = "SELECT 1 -- "
+    sql = prefix + ("x" * (MAX_SQL_LENGTH - len(prefix)))
+    response = QueryResponse.model_validate(
+        {
+            "question": "Return one value",
+            "sql": sql,
+            "result": {
+                "columns": ["value"],
+                "rows": [[1]],
+                "row_count": 1,
+                "truncated": False,
+            },
+            "attempts": 1,
+            "cached_sql": False,
+        }
+    )
+
+    state = WorkingState(last_sql=response.sql)
+
+    assert state.last_sql == response.sql
+
+
+@pytest.mark.parametrize("model", [QueryResponse, WorkingState])
+def test_returned_and_stored_sql_reject_the_same_oversized_value(
+    model: type[QueryResponse | WorkingState],
+) -> None:
+    sql = "x" * (MAX_SQL_LENGTH + 1)
+    payload: dict[str, object]
+    if model is QueryResponse:
+        payload = {
+            "question": "Return one value",
+            "sql": sql,
+            "result": {
+                "columns": ["value"],
+                "rows": [[1]],
+                "row_count": 1,
+                "truncated": False,
+            },
+            "attempts": 1,
+            "cached_sql": False,
+        }
+    else:
+        payload = {"last_sql": sql}
+
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
 
 
 @pytest.mark.parametrize("rule", [" ", "x" * 20_001])

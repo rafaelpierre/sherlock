@@ -29,6 +29,7 @@ from sherlock.services.rule_validation import (
     RuleValidationError,
     RuleValidationResult,
 )
+from sherlock.services.text2sql import SQLGenerationError
 
 
 class StubService:
@@ -45,6 +46,13 @@ class StubService:
             "attempts": 1,
             "cached_sql": False,
         }
+
+
+class OversizedSQLService:
+    async def query(self, question: str) -> dict[str, object]:
+        raise SQLGenerationError(
+            "The generated SQL exceeds the 20,000 character limit."
+        )
 
 
 class StubRuleService:
@@ -306,6 +314,19 @@ def test_query_endpoint_returns_service_result() -> None:
     assert response.status_code == 200
     assert response.json()["question"] == "Count transactions"
     assert response.json()["result"]["rows"] == [[10]]
+
+
+def test_query_endpoint_returns_controlled_error_for_oversized_generated_sql() -> None:
+    app = create_app()
+    app.dependency_overrides[get_text2sql_service] = OversizedSQLService
+
+    with TestClient(app) as client:
+        response = client.post("/v1/query", json={"question": "Count transactions"})
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "detail": "The generated SQL exceeds the 20,000 character limit."
+    }
 
 
 def test_chat_endpoint_returns_artifacts_authoritative_state_and_metadata() -> None:
