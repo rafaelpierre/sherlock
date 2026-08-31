@@ -1,5 +1,33 @@
 # Sherlock evaluations
 
+## Text2SQL HTTP evaluation
+
+The Text2SQL CLI sends the questions in `data/text2sql.json` to a running
+Sherlock backend through `POST /v1/query`. A case passes when the endpoint
+returns a successful response containing the original question, generated SQL,
+and tabular result data.
+
+Start the backend, then run the suite from a second terminal:
+
+```bash
+cd backend
+uv run backend-api
+```
+
+```bash
+cd evals
+uv sync --locked --dev
+uv run sherlock-text2sql-eval
+```
+
+Use `--base-url` or `SHERLOCK_BACKEND_URL` to target a different backend. Use
+`--cases` to run a different JSON file and `--timeout` to change the per-request
+timeout. The command runs every case, prints a pass/fail line and summary, and
+exits with status 1 when any case fails.
+
+The initial suite checks API execution and response shape. Result-correctness
+oracles can be added to the case format in a later iteration.
+
 The shared evaluation runner loads versioned JSON suites from `evals/cases`,
 executes all or a selected subset, prints a concise summary, and writes a
 machine-readable JSON report.
