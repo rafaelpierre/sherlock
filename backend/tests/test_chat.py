@@ -244,6 +244,13 @@ class SequentialQueryWorkflows(StubWorkflows):
         }
 
 
+class WideAnalysisWorkflows(StubWorkflows):
+    async def query(self, question: str) -> dict[str, Any]:
+        response = await super().query(question)
+        response["result"]["rows"] = [["x" * 135_200]]
+        return response
+
+
 def single_query_analysis_factory(workflows: StubWorkflows) -> AnalysisAgentFactory:
     return AnalysisAgentFactory(workflows, model_factory=SingleQueryAnalysisModel)
 
@@ -598,6 +605,29 @@ def test_explore_aggregates_ordered_multi_step_evidence_and_metadata() -> None:
     assert response.metadata.repair_count == 3
     assert response.metadata.cache_hit is False
     assert response.message == "Grounded in all three analysis steps."
+
+
+def test_explore_rejects_complete_event_that_exceeds_frontend_limit() -> None:
+    workflows = WideAnalysisWorkflows()
+    state = WorkingState(
+        candidate_rule="\\" * 20_000,
+        previous_rule="\\" * 20_000,
+        last_sql="\\" * 20_000,
+        last_backtest={"rule": "\\" * 20_000, "metrics": METRICS},
+    )
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        state,
+        analysis_agent_factory=single_query_analysis_factory(workflows),
+        model_factory=ScriptedModelFactory([("explore", {"question": "Wide result"})]),
+    )
+
+    with pytest.raises(ChatAgentError, match="oversized complete response"):
+        asyncio.run(agent.respond("Explore fraud"))
 
 
 def test_generate_rule_tool_updates_authoritative_candidate_state() -> None:

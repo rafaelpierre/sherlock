@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -250,6 +251,7 @@ ChatStreamItem = tuple[
 StreamQueueItem = (
     ChatTextDelta | ChatToolCall | ChatToolResult | ChatResponse | Exception | None
 )
+MAX_COMPLETE_STREAM_EVENT_CHARACTERS = 256_000
 
 _ACTIVITY_COPY: dict[
     str, tuple[Literal["tool_call", "agent_handoff"], str, str, str]
@@ -376,6 +378,15 @@ def _flush_pending_text(
     for pending_delta in pending_text:
         queue.put_nowait(ChatTextDelta(delta=pending_delta))
     pending_text.clear()
+
+
+def _complete_stream_event_size(response: ChatResponse) -> int:
+    """Measure SSE JSON in the UTF-16 units enforced by the frontend parser."""
+
+    payload = json.dumps(
+        response.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+    )
+    return len(payload.encode("utf-16-le")) // 2 + 1
 
 
 def _stream_exception(exc: Exception) -> Exception:
@@ -541,7 +552,7 @@ class ChatAgent:
             raise ChatAgentError(
                 "The ChatAgent returned an oversized assistant message."
             )
-        return ChatResponse(
+        response = ChatResponse(
             message=assistant_message,
             artifacts=self._execution.artifacts,
             working_state=self._execution.working_state,
@@ -551,6 +562,14 @@ class ChatAgent:
                 cache_hit=self._execution.cache_hit,
             ),
         )
+        if (
+            _complete_stream_event_size(response)
+            >= MAX_COMPLETE_STREAM_EVENT_CHARACTERS
+        ):
+            raise ChatAgentError(
+                "The ChatAgent returned an oversized complete response."
+            )
+        return response
 
     def _raise_errors(self) -> None:
         if self._execution.missing_state is not None:
