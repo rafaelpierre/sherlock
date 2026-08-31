@@ -63,8 +63,14 @@ Intent mapping:
 
 Use recent history only for conversational interpretation. Critical rule
 referents come from explicit working state inside the tools. After the tool
-returns, summarize its result concisely. Candidate rules are investigation
-hypotheses, not production fraud decisions.
+returns, summarize its result concisely and end with any useful follow-up or
+clarifying question. Preserve this user-visible turn order:
+1. Before calling the tool, give one brief acknowledgement of what you will do.
+   Do not claim results or ask follow-up questions at this stage.
+2. Call exactly one tool.
+3. After the tool returns, explain the result, then put follow-up or
+   clarification questions last.
+Candidate rules are investigation hypotheses, not production fraud decisions.
 """.strip()
 
 

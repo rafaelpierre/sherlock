@@ -20,6 +20,7 @@ from sherlock.api.chat_models import (
 )
 from sherlock.api.schemas import ConversationMessage, WorkingState
 from sherlock.chat import (
+    CHAT_SYSTEM_PROMPT,
     ChatAgent,
     ChatAgentError,
     ChatAgentFactory,
@@ -52,6 +53,15 @@ METRICS = {
     "fraud_value_recall": 0.6,
     "alerts_per_day": 2.0,
 }
+
+
+def test_chat_prompt_preserves_introduction_tool_result_and_follow_up_order() -> None:
+    assert CHAT_SYSTEM_PROMPT.index(
+        "Before calling the tool"
+    ) < CHAT_SYSTEM_PROMPT.index("Call exactly one tool")
+    assert CHAT_SYSTEM_PROMPT.index("Call exactly one tool") < CHAT_SYSTEM_PROMPT.index(
+        "After the tool returns"
+    )
 
 
 class StubWorkflows:

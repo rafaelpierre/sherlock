@@ -168,6 +168,7 @@ function Message({
       </div>
       <div className="assistant-content">
         <span className="message-label">Sherlock</span>
+        {message.intro && <Prose content={message.intro} />}
         {message.activities?.map((activity) => (
           <StreamActivityView activity={activity} key={activity.id} />
         ))}
@@ -184,25 +185,29 @@ function Message({
             <span>{message.content}</span>
           </div>
         ) : (
-          message.content && (
-            <div className="prose">
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  table: ({ children }) => (
-                    <div className="table-scroll markdown-table">
-                      <table>{children}</table>
-                    </div>
-                  ),
-                }}
-              >
-                {message.content}
-              </Markdown>
-            </div>
-          )
+          message.content && <Prose content={message.content} />
         )}
       </div>
     </article>
+  );
+}
+
+function Prose({ content }: { content: string }) {
+  return (
+    <div className="prose">
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          table: ({ children }) => (
+            <div className="table-scroll markdown-table">
+              <table>{children}</table>
+            </div>
+          ),
+        }}
+      >
+        {content}
+      </Markdown>
+    </div>
   );
 }
 
@@ -250,12 +255,12 @@ export default function App() {
     const controller = new AbortController();
     currentRequest.current = controller;
     const history: ConversationMessage[] = investigation.messages.map(
-      ({ role, content, activities, outcome }) =>
+      ({ role, content, intro, activities, outcome }) =>
         role === "user"
           ? { role, content }
           : {
               role,
-              content,
+              content: intro ? `${intro}\n\n${content}` : content,
               ...(activities && {
                 activities: activities.map(
                   ({ kind, name, message: activityMessage, result, outcome: activityOutcome }) => ({
@@ -300,7 +305,10 @@ export default function App() {
                   : current.messages[draftIndex];
               let updated = draft;
               if (event.type === "text_delta") {
-                updated = { ...draft, content: draft.content + event.delta };
+                updated =
+                  draft.activities && draft.activities.length > 0
+                    ? { ...draft, content: draft.content + event.delta }
+                    : { ...draft, intro: (draft.intro ?? "") + event.delta };
               } else if (event.type === "tool_call") {
                 updated = {
                   ...draft,
@@ -333,6 +341,7 @@ export default function App() {
           id: crypto.randomUUID(),
           role: "assistant",
           content: response.message,
+          intro: draftIndex === -1 ? undefined : current.messages[draftIndex].intro,
           artifacts: response.artifacts,
           intent: response.metadata.intent,
           activities: draftIndex === -1 ? undefined : current.messages[draftIndex].activities,

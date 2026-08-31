@@ -174,6 +174,77 @@ describe("Sherlock application", () => {
     );
   });
 
+  it("keeps the streamed introduction before evidence and the completed summary last", async () => {
+    const user = userEvent.setup();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            stream = controller;
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    render(<App />);
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Stream this{enter}");
+
+    act(() => stream.enqueue(streamEvent("text_delta", { delta: "I will investigate this." })));
+    act(() =>
+      stream.enqueue(
+        streamEvent("tool_call", {
+          id: "call-1",
+          kind: "agent_handoff",
+          name: "Data Analyst",
+          message: "Handing off the analysis",
+        }),
+      ),
+    );
+    act(() =>
+      stream.enqueue(
+        streamEvent("tool_result", {
+          id: "call-1",
+          message: "Analysis completed",
+          outcome: "succeeded",
+        }),
+      ),
+    );
+    act(() => {
+      stream.enqueue(streamEvent("text_delta", { delta: "The result is ready. Any follow-up?" }));
+      stream.enqueue(
+        streamEvent("complete", {
+          ...chatResponse,
+          message: "The result is ready. Any follow-up?",
+        }),
+      );
+      stream.close();
+    });
+
+    const introduction = await screen.findByText("I will investigate this.");
+    const activity = screen.getByText("Data Analyst");
+    const artifact = screen.getByLabelText("Chart of accounts");
+    const summary = screen.getByText("The result is ready. Any follow-up?");
+    expect(
+      introduction.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      activity.compareDocumentPosition(artifact) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      artifact.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      messages: [
+        expect.objectContaining({ content: "Stream this" }),
+        expect.objectContaining({
+          intro: "I will investigate this.",
+          content: "The result is ready. Any follow-up?",
+        }),
+      ],
+    });
+  });
+
   it("persists a failed streamed turn with its activity summaries", async () => {
     const user = userEvent.setup();
     let stream!: ReadableStreamDefaultController<Uint8Array>;

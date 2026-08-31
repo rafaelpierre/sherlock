@@ -162,6 +162,7 @@ export interface TranscriptMessage {
   id?: string;
   role: Role;
   content: string;
+  intro?: string;
   artifacts?: Artifact[];
   intent?: string;
   activities?: StreamActivity[];

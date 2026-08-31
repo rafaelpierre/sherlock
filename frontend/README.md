@@ -47,6 +47,12 @@ payload commits artifacts, metadata, and working state. The client temporarily
 accepts the original JSON response so it remains compatible while backend SSE
 support is delivered.
 
+For streamed turns, a brief introductory text segment remains before the
+activity that follows it; completed activity and typed artifacts come next;
+the final result summary and any follow-up question render last. This is
+presentation-only state: the established chat request and response contracts
+remain unchanged.
+
 Successful completion payloads and stream events are validated with the Zod
 schemas in `src/types.ts` before application state is updated. Those schemas
 are the frontend source for both runtime validation and inferred TypeScript
