@@ -153,6 +153,36 @@ def test_oversized_normalized_sql_is_rejected_before_service_response() -> None:
     assert executor.sql == [generated_sql]
 
 
+def test_oversized_normalized_sql_is_evicted_before_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generator = StrandsSQLGenerator(cast(MCPClient, object()))
+    outputs = iter(["SELECT 1", "SELECT 2"])
+    calls = 0
+
+    def invoke_agent(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return next(outputs)
+
+    monkeypatch.setattr(generator, "_invoke_agent", invoke_agent)
+    executor = StubExecutor(
+        [
+            successful_execution(sql_with_length(MAX_SQL_LENGTH + 1)),
+            successful_execution("SELECT 2"),
+        ]
+    )
+    service = Text2SQLService(generator, executor)
+
+    with pytest.raises(SQLGenerationError, match="20,000 character limit"):
+        asyncio.run(service.query("Return one value"))
+    result = asyncio.run(service.query("Return one value"))
+
+    assert result["sql"] == "SELECT 2"
+    assert executor.sql == ["SELECT 1", "SELECT 2"]
+    assert calls == 2
+
+
 def test_oversized_repaired_sql_is_rejected_before_second_execution() -> None:
     initial_sql = "SELECT missing FROM fraud_transactions"
     executor = StubExecutor(
