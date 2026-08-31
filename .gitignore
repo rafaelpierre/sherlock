@@ -14,3 +14,6 @@ specs
 .terraform
 .terraform.lock.hcl
 terraform.tfstate
+.ruff_cache
+.complexipy_cache
+.pytest_cache
