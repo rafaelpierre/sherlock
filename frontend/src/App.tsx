@@ -27,13 +27,24 @@ const MAX_MESSAGE_LENGTH = 2_000;
 const MAX_HISTORY_CONTENT_LENGTH = 10_000;
 const HISTORY_SEGMENT_SEPARATOR = "\n\n";
 
+function truncateUtf16(value: string, maximumUnits: number): string {
+  let units = 0;
+  let truncated = "";
+  for (const character of value) {
+    if (units + character.length > maximumUnits) break;
+    truncated += character;
+    units += character.length;
+  }
+  return truncated;
+}
+
 function assistantHistoryContent(content: string, intro?: string): string {
-  const boundedContent = content.slice(0, MAX_HISTORY_CONTENT_LENGTH);
+  const boundedContent = truncateUtf16(content, MAX_HISTORY_CONTENT_LENGTH);
   if (!intro) return boundedContent;
   const availableIntroLength =
     MAX_HISTORY_CONTENT_LENGTH - boundedContent.length - HISTORY_SEGMENT_SEPARATOR.length;
   if (availableIntroLength <= 0) return boundedContent;
-  return `${intro.slice(0, availableIntroLength)}${HISTORY_SEGMENT_SEPARATOR}${boundedContent}`;
+  return `${truncateUtf16(intro, availableIntroLength)}${HISTORY_SEGMENT_SEPARATOR}${boundedContent}`;
 }
 
 function Composer({
