@@ -32,6 +32,18 @@ class TableArtifact(QueryData):
     type: Literal["table"]
 
 
+class AnalysisStepArtifact(BaseModel):
+    """One ordered analytical question and its authoritative evidence."""
+
+    model_config = ConfigDict(extra="forbid", ser_json_inf_nan="null")
+
+    type: Literal["analysis_step"]
+    step: int = Field(ge=1)
+    question: str = Field(min_length=1, max_length=2_000)
+    sql: str = Field(min_length=1, max_length=20_000)
+    table: QueryData
+
+
 class CandidateRuleArtifact(RuleGenerateResponse):
     """A generated or refined deterministically validated candidate rule."""
 
@@ -57,6 +69,7 @@ class RuleComparisonArtifact(RuleComparisonResponse):
 Artifact = Annotated[
     SQLArtifact
     | TableArtifact
+    | AnalysisStepArtifact
     | CandidateRuleArtifact
     | BacktestArtifact
     | RuleComparisonArtifact,

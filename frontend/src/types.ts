@@ -44,14 +44,25 @@ const backtestResultSchema = z.strictObject({
   metrics: backtestMetricsSchema,
 });
 
+const queryDataSchema = z.strictObject({
+  columns: z.array(z.string()),
+  rows: z.array(z.array(z.unknown())),
+  row_count: z.number().int(),
+  truncated: z.boolean(),
+});
+
 const artifactSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("sql"), sql: z.string().min(1) }),
   z.strictObject({
     type: z.literal("table"),
-    columns: z.array(z.string()),
-    rows: z.array(z.array(z.unknown())),
-    row_count: z.number().int(),
-    truncated: z.boolean(),
+    ...queryDataSchema.shape,
+  }),
+  z.strictObject({
+    type: z.literal("analysis_step"),
+    step: z.number().int().min(1),
+    question: z.string().min(1).max(2_000),
+    sql: z.string().min(1).max(20_000),
+    table: queryDataSchema,
   }),
   z.strictObject({
     type: z.literal("candidate_rule"),

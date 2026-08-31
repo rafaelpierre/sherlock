@@ -6,9 +6,11 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any, cast
 
 import pytest
+from strands.types.agent import Limits
 from strands.types.content import Message
 
-from sherlock.api.artifacts import SQLArtifact
+from sherlock.analysis import AnalysisAgentFactory
+from sherlock.api.artifacts import AnalysisStepArtifact
 from sherlock.api.chat_models import (
     MAX_ASSISTANT_MESSAGE_LENGTH,
     ChatResponse,
@@ -130,8 +132,9 @@ class InvalidBacktestWorkflows(StubWorkflows):
 
 
 class TextResult:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, stop_reason: str = "end_turn") -> None:
         self.text = text
+        self.stop_reason = stop_reason
 
     def __str__(self) -> str:
         return self.text
@@ -188,6 +191,62 @@ class ScriptedModelFactory:
         return model
 
 
+class SingleQueryAnalysisModel:
+    def __init__(self, tools: list[Any]) -> None:
+        self.tool = tools[0]
+
+    async def invoke_async(
+        self,
+        prompt: str,
+        *,
+        limits: Limits,
+        cancel_signal: threading.Event,
+    ) -> TextResult:
+        assert limits == {"turns": 7}
+        assert not cancel_signal.is_set()
+        await self.tool(question=prompt)
+        return TextResult("Grounded analysis synthesis.")
+
+    def cleanup(self) -> None:
+        pass
+
+
+class ThreeQueryAnalysisModel(SingleQueryAnalysisModel):
+    async def invoke_async(
+        self,
+        prompt: str,
+        *,
+        limits: Limits,
+        cancel_signal: threading.Event,
+    ) -> TextResult:
+        await self.tool(question="Baseline")
+        await self.tool(question="Card types")
+        await self.tool(question="Adaptive Debit drill-down")
+        return TextResult("Grounded in all three analysis steps.")
+
+
+class SequentialQueryWorkflows(StubWorkflows):
+    async def query(self, question: str) -> dict[str, Any]:
+        self.queries.append(question)
+        index = len(self.queries)
+        return {
+            "question": question,
+            "sql": f"SELECT {index} AS finding",
+            "result": {
+                "columns": ["finding"],
+                "rows": [[index]],
+                "row_count": 1,
+                "truncated": False,
+            },
+            "attempts": index,
+            "cached_sql": index != 2,
+        }
+
+
+def single_query_analysis_factory(workflows: StubWorkflows) -> AnalysisAgentFactory:
+    return AnalysisAgentFactory(workflows, model_factory=SingleQueryAnalysisModel)
+
+
 def create_agent(
     workflows: StubWorkflows,
     model_factory: ScriptedModelFactory,
@@ -201,6 +260,7 @@ def create_agent(
         workflows,
         history or [],
         state or WorkingState(),
+        analysis_agent_factory=single_query_analysis_factory(workflows),
         model_factory=model_factory,
     )
 
@@ -232,13 +292,14 @@ def test_stream_translates_workflow_activity_and_text_without_raw_results() -> N
 
     assert [name for name, _ in events] == [
         "tool_call",
+        "tool_call",
         "tool_result",
-        "text_delta",
+        "tool_result",
         "text_delta",
         "complete",
     ]
     call = events[0][1]
-    result = events[1][1]
+    result = events[3][1]
     assert isinstance(call, ChatToolCall)
     assert call.kind == "agent_handoff"
     assert call.name == "Transaction analysis"
@@ -254,7 +315,12 @@ def test_stream_translates_workflow_activity_and_text_without_raw_results() -> N
     )
     complete = events[-1][1]
     assert isinstance(complete, ChatResponse)
-    assert complete.artifacts[0].type == "sql"
+    assert complete.artifacts[0].type == "analysis_step"
+    calls = [payload for name, payload in events if name == "tool_call"]
+    results = [payload for name, payload in events if name == "tool_result"]
+    assert {item.id for item in calls if isinstance(item, ChatToolCall)} == {
+        item.id for item in results if isinstance(item, ChatToolResult)
+    }
 
 
 def test_stream_pairs_activity_before_reporting_missing_state() -> None:
@@ -271,7 +337,7 @@ def test_stream_pairs_activity_before_reporting_missing_state() -> None:
     assert isinstance(error, MissingChatState)
     assert [name for name, _ in events] == ["tool_call", "tool_result"]
     call = events[0][1]
-    result = events[1][1]
+    result = events[-1][1]
     assert isinstance(call, ChatToolCall)
     assert isinstance(result, ChatToolResult)
     assert result.id == call.id
@@ -356,9 +422,14 @@ def test_unexpected_workflow_failure_finishes_started_activity() -> None:
     events, error = asyncio.run(collect_stream_error(agent, "Analyze fraud rate"))
 
     assert isinstance(error, ChatAgentError)
-    assert [name for name, _ in events] == ["tool_call", "tool_result"]
+    assert [name for name, _ in events] == [
+        "tool_call",
+        "tool_call",
+        "tool_result",
+        "tool_result",
+    ]
     call = events[0][1]
-    result = events[1][1]
+    result = events[-1][1]
     assert isinstance(call, ChatToolCall)
     assert isinstance(result, ChatToolResult)
     assert result.id == call.id
@@ -406,14 +477,48 @@ def test_explore_tool_reuses_text2sql_and_returns_sql_and_table_artifacts() -> N
     response = asyncio.run(agent.respond("What about card types?"))
 
     assert workflows.queries == ["fraud rate by card type"]
-    assert [artifact.type for artifact in response.artifacts] == ["sql", "table"]
-    assert isinstance(response.artifacts[0], SQLArtifact)
+    assert [artifact.type for artifact in response.artifacts] == ["analysis_step"]
+    assert isinstance(response.artifacts[0], AnalysisStepArtifact)
     assert response.working_state.last_sql == response.artifacts[0].sql
     assert response.metadata.intent == "EXPLORE"
     assert response.metadata.repair_count == 1
     assert response.metadata.cache_hit is True
+    assert response.message == "Grounded analysis synthesis."
     assert model_factory.histories[0][0]["content"] == [{"text": "Start an analysis"}]
     assert model_factory.models[0].cleaned is True
+
+
+def test_explore_aggregates_ordered_multi_step_evidence_and_metadata() -> None:
+    workflows = SequentialQueryWorkflows()
+    model_factory = ScriptedModelFactory(
+        [("explore", {"question": "Investigate fraud characteristics"})]
+    )
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        WorkingState(),
+        analysis_agent_factory=AnalysisAgentFactory(
+            workflows, model_factory=ThreeQueryAnalysisModel
+        ),
+        model_factory=model_factory,
+    )
+
+    response = asyncio.run(agent.respond("Explore fraud patterns"))
+
+    steps = [
+        artifact
+        for artifact in response.artifacts
+        if isinstance(artifact, AnalysisStepArtifact)
+    ]
+    assert [artifact.step for artifact in steps] == [1, 2, 3]
+    assert [artifact.question for artifact in steps] == workflows.queries
+    assert response.working_state.last_sql == "SELECT 3 AS finding"
+    assert response.metadata.repair_count == 3
+    assert response.metadata.cache_hit is False
+    assert response.message == "Grounded in all three analysis steps."
 
 
 def test_generate_rule_tool_updates_authoritative_candidate_state() -> None:

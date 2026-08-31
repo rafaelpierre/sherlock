@@ -59,7 +59,10 @@ working state.
 React browser workspace
   |  POST /v1/chat (bounded history + explicit working state)
   v
-FastAPI ChatAgent -- exploration --> Text2SQL service --> read-only MCP --> SQLite
+FastAPI ChatAgent -- EXPLORE --> bounded AnalysisAgent
+                                  | sequential analytical questions
+                                  v
+                              Text2SQL service --> read-only MCP --> SQLite
   |
   +-- candidate rules --> generation/refinement --> deterministic validation
   |
@@ -71,7 +74,8 @@ FastAPI ChatAgent -- exploration --> Text2SQL service --> read-only MCP --> SQLi
   in `localStorage`; raw query result tables are not persisted.
 - [`backend/`](backend/) is a Python 3.13 FastAPI application built with Strands
   Agents and Amazon Bedrock. A fresh `ChatAgent` handles each `/v1/chat` request,
-  so the backend retains no hidden conversational session state.
+  and a fresh bounded `AnalysisAgent` handles each `EXPLORE` handoff, so the
+  backend retains no hidden conversational or investigation state.
 - [`mcp/`](mcp/) is a FastMCP service and the only database execution boundary.
   It exposes schema inspection, bounded sample values, database metadata, and
   read-only query execution over an in-memory snapshot of the bundled SQLite
@@ -94,6 +98,9 @@ then applies deterministic controls before data access or historical scoring:
 - SQL generators can inspect schema and bounded sample values but cannot execute
   queries. The Text2SQL service executes their output through MCP and permits at
   most two repair attempts.
+- An analytical handoff can adapt sequential questions to earlier results, but
+  is capped at five attempted queries, seven model turns, and 240 seconds. Every
+  successful step is returned as a grouped question/SQL/table artifact.
 - MCP accepts one SQLite `SELECT` or `WITH` statement, rejects writes, DDL,
   `PRAGMA`, `ATTACH`, extension loading, and multiple statements, applies row
   limits and a best-effort timeout, and uses query-only connections.

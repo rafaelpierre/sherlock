@@ -35,9 +35,11 @@ is rejected before MCP execution and `/v1/query` returns a controlled `502`.
 
 ## Use the conversational API
 
-`POST /v1/chat` creates a fresh ChatAgent for each request. The browser supplies
-bounded recent history and explicit working state; the backend does not retain
-hidden conversation state between requests.
+`POST /v1/chat` creates a fresh ChatAgent for each request. An `EXPLORE` turn
+hands off once to a fresh AnalysisAgent, which can run adaptive sequential
+questions through the existing Text2SQL service. The browser supplies bounded
+recent history and explicit working state; the backend does not retain hidden
+conversation or investigation state between requests.
 
 ```bash
 curl -X POST http://localhost:8080/v1/chat \
@@ -56,13 +58,28 @@ exploration, candidate-rule generation and refinement, historical backtesting,
 and current-versus-previous rule comparison. State-dependent requests such as
 `Backtest it` return a structured `422` response when the required rule is absent.
 
+Analysis is bounded to five attempted Text2SQL questions, seven Strands model
+turns, and a 240-second wall-clock deadline. Narrow questions may stop after one
+successful query. Broad questions return each successful step in deterministic
+order as one `analysis_step` artifact containing its question, SQL, and bounded
+table. Failed steps consume the query budget; after partial success the agent may
+recover or explicitly qualify the missing evidence, while an all-failed analysis
+uses the controlled ChatAgent error boundary.
+
+For `EXPLORE`, `repair_count` is the sum of Text2SQL repairs across successful
+steps and `cache_hit` is true only when every successful step used cached initial
+SQL. `working_state.last_sql` is the most recently successful statement. Raw
+result rows remain confined to response artifacts and are not added to working
+state or conversation history.
+
 Clients that send `Accept: text/event-stream` receive named SSE events in this
 order:
 
 - `tool_call` starts a user-facing activity or specialist handoff;
 - `tool_result` finishes that activity using the same bounded activity ID and
   an explicit success/failure outcome;
-- `text_delta` appends assistant prose as it is generated;
+- `text_delta` appends bounded assistant prose (the terminal specialist
+  synthesis for `EXPLORE`);
 - `complete` supplies the authoritative `ChatResponse`; or
 - `error` supplies a bounded, user-safe message if the stream cannot complete.
 
