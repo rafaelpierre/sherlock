@@ -62,8 +62,8 @@ priority, acceptance criteria, and follow-up work.
   callable by their domain endpoints. Agent prose is never the authoritative
   representation of rules, metrics, or state.
 - Typed backend artifacts are authoritative. In particular, each successful
-  multi-step exploration result is one ordered `analysis_step` artifact that
-  groups its public question, SQL, and bounded table. Update Pydantic/OpenAPI,
+  step in a multi-step exploration produces one ordered `analysis_step` artifact
+  that groups its public question, SQL, and bounded table. Update Pydantic/OpenAPI,
   frontend Zod schemas, and valid/malformed contract tests together when these
   contracts change.
 - SSE exposes only product-safe `tool_call`, `tool_result`, `text_delta`,
