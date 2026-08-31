@@ -94,7 +94,7 @@
         "columns": ["merchant_name", "fraud_cases"],
         "rows": [["Merchant 83018", 101], ["Merchant 48919", 94], ["Merchant 99370", 78], ["Merchant 88260", 74], ["Merchant 31893", 62], ["Merchant 46284", 56], ["Merchant 67570", 56], ["Merchant 41375", 55], ["Merchant 80114", 50], ["Merchant 53492", 43]]
       },
-      "comparison": {"row_order": "sensitive", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": []}
+      "comparison": {"row_order": "ranked", "column_order": "insensitive", "absolute_tolerance": 0.0, "relative_tolerance": 0.0, "null_equivalents": [], "rank_by": [{"column": "fraud_cases", "direction": "descending"}]}
     },
     {
       "id": "fraud-value-by-city",
