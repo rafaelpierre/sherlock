@@ -347,6 +347,8 @@ async def _consume_native_stream(
             result = native_event["result"]
     if result is None:
         raise ChatAgentError("The ChatAgent returned no result event.")
+    if has_selected_intent() and allows_text():
+        _flush_pending_text(pending_text, queue)
     return result
 
 
@@ -364,10 +366,16 @@ def _publish_native_text(
         return
     if not allows_text():
         return
+    _flush_pending_text(pending_text, queue)
+    queue.put_nowait(ChatTextDelta(delta=delta))
+
+
+def _flush_pending_text(
+    pending_text: list[str], queue: asyncio.Queue[StreamQueueItem]
+) -> None:
     for pending_delta in pending_text:
         queue.put_nowait(ChatTextDelta(delta=pending_delta))
     pending_text.clear()
-    queue.put_nowait(ChatTextDelta(delta=delta))
 
 
 def _stream_exception(exc: Exception) -> Exception:

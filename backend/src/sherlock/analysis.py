@@ -285,12 +285,11 @@ class AnalysisAgentFactory:
 
 
 def _analysis_artifact_size(steps: list[AnalysisStepArtifact]) -> int:
-    """Measure the JSON carried by terminal grouped evidence, not Python objects."""
+    """Measure JSON in UTF-16 units, matching the browser event parser."""
 
-    return len(
-        json.dumps(
-            [step.model_dump(mode="json") for step in steps],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+    serialized = json.dumps(
+        [step.model_dump(mode="json") for step in steps],
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
+    return len(serialized.encode("utf-16-le")) // 2

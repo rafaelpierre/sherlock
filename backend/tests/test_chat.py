@@ -23,6 +23,7 @@ from sherlock.chat import (
     ChatAgent,
     ChatAgentError,
     ChatAgentFactory,
+    ChatModelFactory,
     ChatStreamItem,
     InvalidChatState,
     MissingChatState,
@@ -249,7 +250,7 @@ def single_query_analysis_factory(workflows: StubWorkflows) -> AnalysisAgentFact
 
 def create_agent(
     workflows: StubWorkflows,
-    model_factory: ScriptedModelFactory,
+    model_factory: ChatModelFactory,
     state: WorkingState | None = None,
     history: list[ConversationMessage] | None = None,
 ) -> ChatAgent:
@@ -379,6 +380,14 @@ class PreambleStreamingModel(ScriptedModel):
         yield {"result": result}
 
 
+class EarlyOnlyPreambleStreamingModel(PreambleStreamingModel):
+    async def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]:
+        yield {"data": "Coordinator preamble. "}
+        yield {"result": await self.invoke_async(prompt)}
+
+
 class PreambleModelFactory:
     def __call__(
         self, tools: list[Any], history: list[Message]
@@ -386,6 +395,17 @@ class PreambleModelFactory:
         return PreambleStreamingModel(
             tools,
             [("explore", {"question": "fraud rate"})],
+            "Coordinator result.",
+        )
+
+
+class NonExplorePreambleModelFactory:
+    def __call__(
+        self, tools: list[Any], history: list[Message]
+    ) -> EarlyOnlyPreambleStreamingModel:
+        return EarlyOnlyPreambleStreamingModel(
+            tools,
+            [("generate_rule", {"instruction": "high amount"})],
             "Coordinator result.",
         )
 
@@ -411,6 +431,19 @@ def test_explore_stream_discards_coordinator_preamble_before_specialist_text() -
         if name == "text_delta" and isinstance(payload, ChatTextDelta)
     ]
     assert deltas == ["Grounded analysis synthesis."]
+
+
+def test_non_explore_stream_flushes_preamble_after_intent_selection() -> None:
+    agent = create_agent(StubWorkflows(), NonExplorePreambleModelFactory())
+
+    events = asyncio.run(collect_stream(agent, "Create a rule"))
+
+    deltas = [
+        payload.delta
+        for name, payload in events
+        if name == "text_delta" and isinstance(payload, ChatTextDelta)
+    ]
+    assert deltas == ["Coordinator preamble. "]
 
 
 class BlockingModelFactory:

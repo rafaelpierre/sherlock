@@ -212,6 +212,24 @@ def test_cumulative_evidence_size_limit_keeps_prior_steps() -> None:
     assert "evidence limit" in tool_results[1]["error"]
 
 
+def test_cumulative_evidence_limit_counts_utf16_units() -> None:
+    class EmojiEvidenceService(ScriptedService):
+        async def query(self, question: str) -> dict[str, Any]:
+            response = await super().query(question)
+            response["result"]["rows"] = [["\U0001f600" * 80_000]]
+            return response
+
+    tool_results: list[dict[str, Any]] = []
+
+    async def script(tool: Any) -> None:
+        tool_results.append(await tool(question="Emoji result"))
+
+    with pytest.raises(AnalysisAgentError, match="no successful"):
+        run_analysis(EmojiEvidenceService(), ModelFactory(script))
+
+    assert "evidence limit" in tool_results[0]["error"]
+
+
 def test_partial_failure_is_paired_and_successful_evidence_remains() -> None:
     service = ScriptedService(failures={1})
     events: list[tuple[str, bool | None]] = []
