@@ -24,6 +24,17 @@ const suggestions = [
   "Show fraud value by merchant category",
 ];
 const MAX_MESSAGE_LENGTH = 2_000;
+const MAX_HISTORY_CONTENT_LENGTH = 10_000;
+const HISTORY_SEGMENT_SEPARATOR = "\n\n";
+
+function assistantHistoryContent(content: string, intro?: string): string {
+  const boundedContent = content.slice(0, MAX_HISTORY_CONTENT_LENGTH);
+  if (!intro) return boundedContent;
+  const availableIntroLength =
+    MAX_HISTORY_CONTENT_LENGTH - boundedContent.length - HISTORY_SEGMENT_SEPARATOR.length;
+  if (availableIntroLength <= 0) return boundedContent;
+  return `${intro.slice(0, availableIntroLength)}${HISTORY_SEGMENT_SEPARATOR}${boundedContent}`;
+}
 
 function Composer({
   value,
@@ -260,7 +271,7 @@ export default function App() {
           ? { role, content }
           : {
               role,
-              content: intro ? `${intro}\n\n${content}` : content,
+              content: assistantHistoryContent(content, intro),
               ...(activities && {
                 activities: activities.map(
                   ({ kind, name, message: activityMessage, result, outcome: activityOutcome }) => ({

@@ -511,6 +511,33 @@ describe("Sherlock application", () => {
     expect(payload.working_state.last_sql).toBe("SELECT 1");
   });
 
+  it("bounds combined assistant introductions and summaries in request history", async () => {
+    const intro = "I".repeat(6_000);
+    const summary = "S".repeat(5_000);
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: STORAGE_VERSION,
+        conversation_id: SAVED_CONVERSATION_ID,
+        messages: [{ role: "assistant", intro, content: summary }],
+        working_state: {},
+      }),
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ ...chatResponse, artifacts: [] }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByLabelText("Ask Sherlock"), "Continue{enter}");
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    const payload = JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body));
+    const combined = payload.history[0].content as string;
+
+    expect(combined).toHaveLength(10_000);
+    expect(combined).toBe(`${intro.slice(0, 4_998)}\n\n${summary}`);
+  });
+
   it("sends persisted failed activity context with a later try-again turn", async () => {
     localStorage.setItem(
       STORAGE_KEY,
