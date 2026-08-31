@@ -28,7 +28,8 @@ The current system has five main areas:
 - `evals/`: versioned evaluation fixtures, schemas, and the Text2SQL HTTP
   evaluation CLI. The shared deterministic evaluation runner currently lives in
   `backend/`; keep its cross-package contract explicit when changing either
-  area.
+  area. Result-correctness oracles compare normalized result semantics, not
+  generated SQL text; retain explicit cohort/null expectations in those cases.
 - `terraform/`: a partial AWS scaffold that currently provisions AgentCore,
   ECR, and IAM resources. It is not the final deployment architecture: follow
   [#61](https://github.com/rafaelpierre/sherlock/issues/61) for the unresolved
