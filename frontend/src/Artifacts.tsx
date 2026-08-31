@@ -257,6 +257,22 @@ export function ArtifactView({ artifact }: { artifact: Artifact }) {
       </details>
     );
   if (artifact.type === "table") return <TableArtifact artifact={artifact} />;
+  if (artifact.type === "analysis_step")
+    return (
+      <section className="artifact-card analysis-step">
+        <div className="artifact-heading">
+          <span className="artifact-kicker">Analysis step {artifact.step}</span>
+          <h3>{artifact.question}</h3>
+        </div>
+        <TableArtifact artifact={{ type: "table", ...artifact.table }} />
+        <details className="sql-card">
+          <summary>View generated SQL</summary>
+          <pre>
+            <code>{artifact.sql}</code>
+          </pre>
+        </details>
+      </section>
+    );
   if (artifact.type === "backtest") return <BacktestCard result={artifact} />;
   if (artifact.type === "rule_comparison") return <ComparisonCard artifact={artifact} />;
   return (

@@ -8,6 +8,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from sherlock.api.app import create_app
 from sherlock.api.artifacts import (
+    AnalysisStepArtifact,
     Artifact,
     BacktestArtifact,
     CandidateRuleArtifact,
@@ -58,6 +59,23 @@ def test_table_artifact_reuses_query_data_shape() -> None:
 
     assert isinstance(artifact, QueryData)
     assert artifact.model_dump()["rows"] == [["Debit", 0.0031]]
+
+
+def test_analysis_step_groups_question_sql_and_table_evidence() -> None:
+    artifact = AnalysisStepArtifact(
+        type="analysis_step",
+        step=1,
+        question="Compare fraud rates by card type",
+        sql="SELECT card_type, AVG(is_fraud) FROM fraud_transactions",
+        table={
+            "columns": ["card_type", "fraud_rate"],
+            "rows": [["Debit", 0.0031]],
+            "row_count": 1,
+            "truncated": False,
+        },
+    )
+
+    assert artifact.table.rows == [["Debit", 0.0031]]
 
 
 def test_candidate_rule_artifact_serializes_validation_result() -> None:
@@ -128,6 +146,7 @@ def test_artifact_union_schema_has_complete_discriminator_mapping() -> None:
 
     assert schema["discriminator"] == {
         "mapping": {
+            "analysis_step": "#/$defs/AnalysisStepArtifact",
             "backtest": "#/$defs/BacktestArtifact",
             "candidate_rule": "#/$defs/CandidateRuleArtifact",
             "rule_comparison": "#/$defs/RuleComparisonArtifact",
@@ -136,7 +155,7 @@ def test_artifact_union_schema_has_complete_discriminator_mapping() -> None:
         },
         "propertyName": "type",
     }
-    assert len(schema["oneOf"]) == 5
+    assert len(schema["oneOf"]) == 6
 
 
 def test_artifact_union_generates_complete_openapi_components() -> None:
@@ -154,13 +173,14 @@ def test_artifact_union_generates_complete_openapi_components() -> None:
     item_schema = schemas["ArtifactEnvelope"]["properties"]["artifacts"]["items"]
 
     assert set(item_schema["discriminator"]["mapping"]) == {
+        "analysis_step",
         "sql",
         "table",
         "candidate_rule",
         "backtest",
         "rule_comparison",
     }
-    assert len(item_schema["oneOf"]) == 5
+    assert len(item_schema["oneOf"]) == 6
 
 
 def test_chat_openapi_response_exposes_artifact_discriminator() -> None:
@@ -173,6 +193,7 @@ def test_chat_openapi_response_exposes_artifact_discriminator() -> None:
     ]["items"]
 
     assert set(artifacts["discriminator"]["mapping"]) == {
+        "analysis_step",
         "sql",
         "table",
         "candidate_rule",

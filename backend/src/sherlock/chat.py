@@ -11,13 +11,15 @@ from typing import Any, Literal, Protocol, cast
 from strands import Agent, tool
 from strands.types.content import Message
 
+from sherlock.analysis import (
+    AnalysisAgentError,
+    AnalysisAgentFactory,
+)
 from sherlock.api.artifacts import (
     Artifact,
     BacktestArtifact,
     CandidateRuleArtifact,
     RuleComparisonArtifact,
-    SQLArtifact,
-    TableArtifact,
 )
 from sherlock.api.chat_models import (
     MAX_ASSISTANT_MESSAGE_LENGTH,
@@ -31,7 +33,6 @@ from sherlock.api.chat_models import (
 from sherlock.api.schemas import (
     BacktestResponse,
     ConversationMessage,
-    QueryResponse,
     RuleComparisonResponse,
     RuleGenerateResponse,
     RuleRefineResponse,
@@ -46,7 +47,6 @@ from sherlock.services.rule_generation import (
     InvalidCurrentRule,
     RuleGenerationError,
 )
-from sherlock.services.text2sql import Text2SQLError
 
 CHAT_SYSTEM_PROMPT = """
 You are Sherlock's conversational fraud analytics coordinator. Choose exactly
@@ -54,7 +54,8 @@ one ordinary tool for every user message. The tools call authoritative services;
 never invent SQL, rules, query results, metrics, comparisons, or state.
 
 Intent mapping:
-- EXPLORE: analytical questions about transaction data.
+- EXPLORE: analytical questions about transaction data. Call explore once; its
+  specialist synthesis is terminal for this turn, so do not call another tool.
 - GENERATE_RULE: requests to create a new candidate fraud rule.
 - REFINE_RULE: requests to modify the current candidate rule.
 - BACKTEST_RULE: requests to evaluate the current candidate rule historically.
@@ -82,6 +83,20 @@ ChatModelFactory = Callable[[list[Any], list[Message]], ChatModel]
 
 class Text2SQLWorkflow(Protocol):
     async def query(self, question: str) -> dict[str, Any]: ...
+
+
+class AnalysisWorkflow(Protocol):
+    async def analyze(
+        self,
+        question: str,
+        *,
+        cancel_signal: threading.Event,
+        event_sink: Callable[[str, bool | None], None] | None = None,
+    ) -> Any: ...
+
+
+class AnalysisWorkflowFactory(Protocol):
+    def create(self) -> AnalysisWorkflow: ...
 
 
 class RuleGenerationWorkflow(Protocol):
@@ -137,6 +152,8 @@ class _ChatExecution:
     event_sink: Callable[[ChatToolCall | ChatToolResult], None] | None = None
     activity_count: int = 0
     active_activities: dict[str, str] = field(default_factory=dict)
+    cancel_signal: threading.Event = field(default_factory=threading.Event)
+    analysis_message: str | None = None
 
     def select(self, intent: ChatIntent) -> bool:
         if self.intent is not None:
@@ -190,12 +207,31 @@ class _ChatExecution:
             )
         )
 
+    def analysis_activity(self, activity_id: str, succeeded: bool | None) -> None:
+        """Publish a bounded specialist-query activity with stable pairing."""
+
+        if self.event_sink is None:
+            return
+        if succeeded is None:
+            self.active_activities[activity_id] = "analysis_query"
+            kind, name, message, _ = _ACTIVITY_COPY["analysis_query"]
+            self.event_sink(
+                ChatToolCall(
+                    id=activity_id,
+                    kind=kind,
+                    name=name,
+                    message=message,
+                )
+            )
+            return
+        self.finish_activity("analysis_query", activity_id, succeeded=succeeded)
+
     def fail_active_activities(self) -> None:
         for activity_id, tool_name in list(self.active_activities.items()):
             self.finish_activity(tool_name, activity_id, succeeded=False)
 
     def allows_streamed_text(self) -> bool:
-        return all(
+        return self.intent != "EXPLORE" and all(
             error is None
             for error in (
                 self.missing_state,
@@ -223,6 +259,12 @@ _ACTIVITY_COPY: dict[
         "Transaction analysis",
         "Sherlock's analysis specialist is investigating the transaction data.",
         "Transaction analysis is ready.",
+    ),
+    "analysis_query": (
+        "tool_call",
+        "Analysis evidence",
+        "Sherlock is querying bounded transaction evidence.",
+        "The analysis evidence is ready.",
     ),
     "generate_rule": (
         "tool_call",
@@ -363,6 +405,7 @@ class ChatAgent:
         history: list[ConversationMessage],
         working_state: WorkingState,
         *,
+        analysis_agent_factory: AnalysisWorkflowFactory | None = None,
         model_factory: ChatModelFactory = _create_strands_model,
     ) -> None:
         self._text2sql_service = text2sql_service
@@ -371,6 +414,9 @@ class ChatAgent:
         self._rule_comparison_service = rule_comparison_service
         self._history = history
         self._execution = _ChatExecution(working_state.model_copy(deep=True))
+        self._analysis_agent_factory = analysis_agent_factory or AnalysisAgentFactory(
+            text2sql_service
+        )
         self._model_factory = model_factory
 
     async def respond(self, message: str) -> ChatResponse:
@@ -392,6 +438,7 @@ class ChatAgent:
         model = self._model_factory(self._tools(), _strands_history(self._history))
         queue: asyncio.Queue[StreamQueueItem] = asyncio.Queue()
         cancel_signal = threading.Event()
+        self._execution.cancel_signal = cancel_signal
 
         def publish(event: ChatToolCall | ChatToolResult) -> None:
             queue.put_nowait(event)
@@ -407,7 +454,10 @@ class ChatAgent:
                     queue,
                     self._execution.allows_streamed_text,
                 )
-                queue.put_nowait(self._response(result))
+                response = self._response(result)
+                if self._execution.intent == "EXPLORE":
+                    queue.put_nowait(ChatTextDelta(delta=response.message))
+                queue.put_nowait(response)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - cross-task error transport
@@ -443,7 +493,11 @@ class ChatAgent:
             raise ChatAgentError(
                 "The ChatAgent did not select a supported workflow tool."
             )
-        assistant_message = str(result).strip()
+        assistant_message = (
+            self._execution.analysis_message
+            if self._execution.intent == "EXPLORE"
+            else str(result).strip()
+        )
         if not assistant_message:
             raise ChatAgentError("The ChatAgent returned no assistant message.")
         if len(assistant_message) > MAX_ASSISTANT_MESSAGE_LENGTH:
@@ -484,30 +538,36 @@ class ChatAgent:
 
     @tool(name="explore")
     async def explore(self, question: str) -> dict[str, Any]:
-        """Answer one analytical data question through the Text2SQL service."""
+        """Hand one analytical request to the bounded AnalysisAgent."""
 
         if not self._execution.select("EXPLORE"):
             return {"error": self._execution.routing_error}
         activity_id = self._execution.begin_activity("explore")
         try:
-            response = QueryResponse.model_validate(
-                await self._text2sql_service.query(question)
+            response = await self._analysis_agent_factory.create().analyze(
+                question,
+                cancel_signal=self._execution.cancel_signal,
+                event_sink=self._execution.analysis_activity,
             )
-        except Text2SQLError as exc:
+        except asyncio.CancelledError:
+            self._execution.finish_activity("explore", activity_id, succeeded=False)
+            raise
+        except AnalysisAgentError as exc:
             self._execution.service_error = exc
             self._execution.finish_activity("explore", activity_id, succeeded=False)
             return {"error": str(exc)}
-        self._execution.artifacts.extend(
-            [
-                SQLArtifact(type="sql", sql=response.sql),
-                TableArtifact(type="table", **response.result.model_dump()),
-            ]
-        )
-        self._execution.working_state.last_sql = response.sql
-        self._execution.repair_count = response.attempts - 1
-        self._execution.cache_hit = response.cached_sql
+        self._execution.artifacts.extend(response.steps)
+        self._execution.working_state.last_sql = response.steps[-1].sql
+        self._execution.repair_count = response.repair_count
+        self._execution.cache_hit = response.cache_hit
+        self._execution.analysis_message = response.message
         self._execution.finish_activity("explore", activity_id)
-        return response.model_dump(mode="json")
+        return {
+            "message": (
+                "The bounded analysis is complete. Return without calling another "
+                "tool; its synthesis and evidence are authoritative."
+            )
+        }
 
     @tool(name="generate_rule")
     async def generate_rule(self, instruction: str) -> dict[str, Any]:
@@ -677,12 +737,16 @@ class ChatAgentFactory:
         backtest_service: BacktestWorkflow,
         rule_comparison_service: RuleComparisonWorkflow,
         *,
+        analysis_agent_factory: AnalysisWorkflowFactory | None = None,
         model_factory: ChatModelFactory = _create_strands_model,
     ) -> None:
         self._text2sql_service = text2sql_service
         self._rule_generation_service = rule_generation_service
         self._backtest_service = backtest_service
         self._rule_comparison_service = rule_comparison_service
+        self._analysis_agent_factory = analysis_agent_factory or AnalysisAgentFactory(
+            text2sql_service
+        )
         self._model_factory = model_factory
 
     def create(
@@ -697,5 +761,6 @@ class ChatAgentFactory:
             self._rule_comparison_service,
             history,
             working_state,
+            analysis_agent_factory=self._analysis_agent_factory,
             model_factory=self._model_factory,
         )

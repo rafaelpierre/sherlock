@@ -3,6 +3,33 @@ import userEvent from "@testing-library/user-event";
 import { ArtifactView } from "./Artifacts";
 
 describe("artifact rendering", () => {
+  it("keeps an analysis question, SQL, and table visibly grouped", async () => {
+    const user = userEvent.setup();
+    render(
+      <ArtifactView
+        artifact={{
+          type: "analysis_step",
+          step: 2,
+          question: "Validate the Debit concentration by amount",
+          sql: "SELECT card_type, AVG(amount_usd) FROM fraud_transactions",
+          table: {
+            columns: ["card_type", "average_amount"],
+            rows: [["Debit", 125]],
+            row_count: 1,
+            truncated: false,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Analysis step 2")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Validate the Debit/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "▦ Result" }));
+    expect(screen.getByRole("cell", { name: "Debit" })).toBeInTheDocument();
+    await user.click(screen.getByText("View generated SQL"));
+    expect(screen.getByText(/SELECT card_type/)).toBeVisible();
+  });
+
   it("falls back to a result table without numeric values", () => {
     render(
       <ArtifactView

@@ -255,6 +255,16 @@ describe("chat API", () => {
       { type: "table", columns: ["account"], rows: "not rows", row_count: 1, truncated: false },
     ],
     [
+      "analysis_step",
+      {
+        type: "analysis_step",
+        step: 1,
+        question: "Compare fraud rates",
+        sql: "SELECT 1",
+        table: { columns: ["rate"], rows: "not rows", row_count: 1, truncated: false },
+      },
+    ],
+    [
       "candidate_rule",
       {
         type: "candidate_rule",
