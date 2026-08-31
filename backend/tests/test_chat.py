@@ -302,6 +302,73 @@ class BlockingStreamingModel(ScriptedModel):
         await asyncio.Event().wait()
 
 
+class ProviderOAuthFailure(Exception):
+    def __init__(self) -> None:
+        self.response = {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "The provided authorization grant is invalid or expired.",
+            }
+        }
+
+
+class NarrationFailureModel(ScriptedModel):
+    async def stream_async(
+        self, prompt: str, *, cancel_signal: threading.Event
+    ) -> AsyncIterator[dict[str, Any]]:
+        await self.invoke_async(prompt)
+        raise ProviderOAuthFailure
+        yield  # pragma: no cover - makes this an async generator
+
+
+class NarrationFailureModelFactory:
+    def __init__(self) -> None:
+        self.model: NarrationFailureModel | None = None
+
+    def __call__(
+        self, tools: list[Any], history: list[Message]
+    ) -> NarrationFailureModel:
+        self.model = NarrationFailureModel(
+            tools,
+            [("explore", {"question": "fraud rate by card type"})],
+            "unused",
+        )
+        return self.model
+
+
+def test_stream_recovers_completed_explore_when_narration_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workflows = StubWorkflows()
+    factory = NarrationFailureModelFactory()
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        WorkingState(),
+        model_factory=factory,
+    )
+
+    events = asyncio.run(collect_stream(agent, "Explore card fraud"))
+
+    assert [name for name, _ in events] == ["tool_call", "tool_result", "complete"]
+    response = events[-1][1]
+    assert isinstance(response, ChatResponse)
+    assert response.message.startswith("The transaction analysis is complete.")
+    assert [artifact.type for artifact in response.artifacts] == ["sql", "table"]
+    assert response.metadata.intent == "EXPLORE"
+    assert '"event":"chat_stream_failure"' in caplog.text
+    assert '"exception_type":"ProviderOAuthFailure"' in caplog.text
+    assert '"workflow":"EXPLORE"' in caplog.text
+    assert '"artifacts_ready":true' in caplog.text
+    assert '"recovered":true' in caplog.text
+    assert '"provider_error_code":"AWS_OAUTH_GRANT_INVALID"' in caplog.text
+    assert factory.model is not None
+    assert factory.model.cleaned is True
+
+
 class BlockingModelFactory:
     def __init__(self) -> None:
         self.model: BlockingStreamingModel | None = None
@@ -414,6 +481,53 @@ def test_explore_tool_reuses_text2sql_and_returns_sql_and_table_artifacts() -> N
     assert response.metadata.cache_hit is True
     assert model_factory.histories[0][0]["content"] == [{"text": "Start an analysis"}]
     assert model_factory.models[0].cleaned is True
+
+
+def test_repeated_explore_tool_call_reuses_completed_analysis() -> None:
+    workflows = StubWorkflows()
+    agent = create_agent(
+        workflows,
+        ScriptedModelFactory(
+            [
+                ("explore", {"question": "fraud rate by card type"}),
+                ("explore", {"question": "fraud rate by card type"}),
+            ]
+        ),
+    )
+
+    response = asyncio.run(agent.respond("Explore fraud patterns"))
+
+    assert workflows.queries == ["fraud rate by card type"]
+    assert [artifact.type for artifact in response.artifacts] == ["sql", "table"]
+    assert response.metadata.intent == "EXPLORE"
+
+
+def test_stream_ignores_second_tool_selection_after_completed_explore() -> None:
+    workflows = StubWorkflows()
+    agent = create_agent(
+        workflows,
+        ScriptedModelFactory(
+            [
+                ("explore", {"question": "fraud rate by card type"}),
+                ("generate_rule", {"instruction": "create a rule"}),
+            ]
+        ),
+    )
+
+    events = asyncio.run(collect_stream(agent, "Explore further"))
+
+    assert [name for name, _ in events] == [
+        "tool_call",
+        "tool_result",
+        "text_delta",
+        "text_delta",
+        "complete",
+    ]
+    response = events[-1][1]
+    assert isinstance(response, ChatResponse)
+    assert response.message == "Completed the requested workflow."
+    assert workflows.queries == ["fraud rate by card type"]
+    assert workflows.generated == []
 
 
 def test_generate_rule_tool_updates_authoritative_candidate_state() -> None:
@@ -533,7 +647,7 @@ def test_state_dependent_tools_fail_before_calling_service(
     assert model_factory.models[0].cleaned is True
 
 
-def test_chat_agent_rejects_multiple_or_missing_tool_selections() -> None:
+def test_chat_agent_uses_first_tool_and_rejects_missing_tool_selection() -> None:
     workflows = StubWorkflows()
     multiple = create_agent(
         workflows,
@@ -546,10 +660,13 @@ def test_chat_agent_rejects_multiple_or_missing_tool_selections() -> None:
     )
     missing = create_agent(workflows, ScriptedModelFactory([]))
 
-    with pytest.raises(ChatAgentError, match="more than one"):
-        asyncio.run(multiple.respond("Do two things"))
+    response = asyncio.run(multiple.respond("Do two things"))
     with pytest.raises(ChatAgentError, match="did not select"):
         asyncio.run(missing.respond("Hello"))
+
+    assert response.metadata.intent == "GENERATE_RULE"
+    assert workflows.generated == ["high amount"]
+    assert workflows.queries == []
 
 
 @pytest.mark.parametrize(

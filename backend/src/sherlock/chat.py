@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -47,6 +49,8 @@ from sherlock.services.rule_generation import (
     RuleGenerationError,
 )
 from sherlock.services.text2sql import Text2SQLError
+
+LOGGER = logging.getLogger(__name__)
 
 CHAT_SYSTEM_PROMPT = """
 You are Sherlock's conversational fraud analytics coordinator. Choose exactly
@@ -134,16 +138,27 @@ class _ChatExecution:
     invalid_state: InvalidChatState | None = None
     service_error: Exception | None = None
     routing_error: str | None = None
+    rejected_tool_message: str | None = None
     event_sink: Callable[[ChatToolCall | ChatToolResult], None] | None = None
     activity_count: int = 0
     active_activities: dict[str, str] = field(default_factory=dict)
+    completed_explore_result: dict[str, Any] | None = None
 
     def select(self, intent: ChatIntent) -> bool:
         if self.intent is not None:
-            self.routing_error = "The ChatAgent selected more than one workflow tool."
+            self.rejected_tool_message = (
+                "A workflow has already completed for this turn. Summarize its "
+                "authoritative result without calling another tool."
+            )
             return False
         self.intent = intent
         return True
+
+    def rejected_tool_result(self) -> dict[str, str]:
+        return {
+            "error": self.rejected_tool_message
+            or "This workflow cannot run for the current turn."
+        }
 
     def require(self, intent: ChatIntent, *fields: str) -> bool:
         missing = [name for name in fields if getattr(self.working_state, name) is None]
@@ -412,7 +427,12 @@ class ChatAgent:
                 raise
             except Exception as exc:  # noqa: BLE001 - cross-task error transport
                 self._execution.fail_active_activities()
-                queue.put_nowait(_stream_exception(exc))
+                recovery = self._recover_explore_completion(exc)
+                if recovery is None:
+                    self._log_stream_failure(exc, recovered=False)
+                    queue.put_nowait(_stream_exception(exc))
+                else:
+                    queue.put_nowait(recovery)
             finally:
                 self._execution.event_sink = None
                 try:
@@ -429,6 +449,47 @@ class ChatAgent:
             if not producer.done():
                 producer.cancel()
             await asyncio.gather(producer, return_exceptions=True)
+
+    def _recover_explore_completion(self, exc: Exception) -> ChatResponse | None:
+        """Keep a completed analysis usable when only model narration fails."""
+
+        if (
+            self._execution.intent != "EXPLORE"
+            or self._execution.completed_explore_result is None
+            or self._execution.service_error is not None
+        ):
+            return None
+        self._log_stream_failure(exc, recovered=True)
+        return ChatResponse(
+            message=(
+                "The transaction analysis is complete. Review the generated SQL "
+                "and results table for the authoritative findings."
+            ),
+            artifacts=self._execution.artifacts,
+            working_state=self._execution.working_state,
+            metadata=ChatMetadata(
+                intent="EXPLORE",
+                repair_count=self._execution.repair_count,
+                cache_hit=self._execution.cache_hit,
+            ),
+        )
+
+    def _log_stream_failure(self, exc: Exception, *, recovered: bool) -> None:
+        """Record a diagnosable stream boundary without logging model data."""
+
+        LOGGER.error(
+            json.dumps(
+                {
+                    "event": "chat_stream_failure",
+                    "exception_type": type(exc).__name__,
+                    "workflow": self._execution.intent,
+                    "artifacts_ready": bool(self._execution.artifacts),
+                    "recovered": recovered,
+                    "provider_error_code": _provider_error_code(exc),
+                },
+                separators=(",", ":"),
+            )
+        )
 
     def _prompt(self, message: str) -> str:
         return (
@@ -486,8 +547,10 @@ class ChatAgent:
     async def explore(self, question: str) -> dict[str, Any]:
         """Answer one analytical data question through the Text2SQL service."""
 
+        if self._execution.completed_explore_result is not None:
+            return self._execution.completed_explore_result
         if not self._execution.select("EXPLORE"):
-            return {"error": self._execution.routing_error}
+            return self._execution.rejected_tool_result()
         activity_id = self._execution.begin_activity("explore")
         try:
             response = QueryResponse.model_validate(
@@ -507,14 +570,15 @@ class ChatAgent:
         self._execution.repair_count = response.attempts - 1
         self._execution.cache_hit = response.cached_sql
         self._execution.finish_activity("explore", activity_id)
-        return response.model_dump(mode="json")
+        self._execution.completed_explore_result = response.model_dump(mode="json")
+        return self._execution.completed_explore_result
 
     @tool(name="generate_rule")
     async def generate_rule(self, instruction: str) -> dict[str, Any]:
         """Create and validate one new candidate rule from an instruction."""
 
         if not self._execution.select("GENERATE_RULE"):
-            return {"error": self._execution.routing_error}
+            return self._execution.rejected_tool_result()
         activity_id = self._execution.begin_activity("generate_rule")
         try:
             response = RuleGenerateResponse.model_validate(
@@ -543,7 +607,7 @@ class ChatAgent:
 
         intent: ChatIntent = "REFINE_RULE"
         if not self._execution.select(intent):
-            return {"error": self._execution.routing_error}
+            return self._execution.rejected_tool_result()
         activity_id = self._execution.begin_activity("refine_rule")
         if not self._execution.require(intent, "candidate_rule"):
             self._execution.finish_activity("refine_rule", activity_id, succeeded=False)
@@ -586,7 +650,7 @@ class ChatAgent:
 
         intent: ChatIntent = "BACKTEST_RULE"
         if not self._execution.select(intent):
-            return {"error": self._execution.routing_error}
+            return self._execution.rejected_tool_result()
         activity_id = self._execution.begin_activity("backtest_rule")
         if not self._execution.require(intent, "candidate_rule"):
             self._execution.finish_activity(
@@ -629,7 +693,7 @@ class ChatAgent:
 
         intent: ChatIntent = "COMPARE_RULES"
         if not self._execution.select(intent):
-            return {"error": self._execution.routing_error}
+            return self._execution.rejected_tool_result()
         activity_id = self._execution.begin_activity("compare_rules")
         if not self._execution.require(intent, "candidate_rule", "previous_rule"):
             self._execution.finish_activity(
@@ -665,6 +729,26 @@ class ChatAgent:
         self._execution.working_state.previous_rule = response.previous.rule
         self._execution.finish_activity("compare_rules", activity_id)
         return response.model_dump(mode="json")
+
+
+def _provider_error_code(exc: Exception) -> str | None:
+    """Return a safe provider category without retaining provider response text."""
+
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    error = response.get("Error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("Code")
+    message = error.get("Message")
+    if (
+        code == "ValidationException"
+        and isinstance(message, str)
+        and "authorization grant" in message.lower()
+    ):
+        return "AWS_OAUTH_GRANT_INVALID"
+    return code if isinstance(code, str) else None
 
 
 class ChatAgentFactory:
