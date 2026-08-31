@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import ParseError
+from sqlglot.errors import SqlglotError
 
 UNSAFE_EXPRESSION_TYPES = (
     exp.Insert,
@@ -34,7 +34,7 @@ def sql_safety_error(sql: str) -> str | None:
             for statement in sqlglot.parse(sql, read="sqlite")
             if statement is not None
         ]
-    except ParseError:
+    except SqlglotError:
         return "generated SQL could not be parsed"
     if len(statements) != 1:
         return "generated SQL must contain exactly one statement"

@@ -20,6 +20,7 @@ def test_read_only_queries_are_safe(sql: str) -> None:
     ("sql", "message"),
     [
         ("not valid sql !!!", "could not be parsed"),
+        ("SELECT 'unterminated", "could not be parsed"),
         ("SELECT 1; SELECT 2", "exactly one statement"),
         ("DELETE FROM fraud_transactions", "not a read-only query"),
         ("SELECT load_extension('x')", "forbidden load_extension"),

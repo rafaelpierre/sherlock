@@ -266,10 +266,27 @@ def _evaluate_response(
         return _failed(
             case, "execution", "result rows must be a row list", latency_ms, sql=sql
         )
-    if result.get("truncated") is True:
+    truncated = result.get("truncated")
+    if not isinstance(truncated, bool):
+        return _failed(
+            case,
+            "execution",
+            "result truncated must be a boolean",
+            latency_ms,
+            sql=sql,
+        )
+    if truncated:
         return _failed(case, "execution", "result was truncated", latency_ms, sql=sql)
     row_count = result.get("row_count")
-    if row_count is not None and row_count != len(rows):
+    if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count < 0:
+        return _failed(
+            case,
+            "execution",
+            "result row_count must be a non-negative integer",
+            latency_ms,
+            sql=sql,
+        )
+    if row_count != len(rows):
         return _failed(
             case,
             "execution",

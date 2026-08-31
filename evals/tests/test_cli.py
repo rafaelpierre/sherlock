@@ -71,6 +71,7 @@ def test_cli_posts_every_case_and_writes_machine_report(
                 "result": {
                     "columns": [" VALUE "],
                     "rows": [[1.005]],
+                    "row_count": 1,
                     "truncated": False,
                 },
             },
@@ -125,7 +126,12 @@ def test_cli_reports_failure_categories_separately(tmp_path: Path, monkeypatch) 
             json={
                 "question": question,
                 "sql": sql,
-                "result": {"columns": ["value"], "rows": [[2]]},
+                "result": {
+                    "columns": ["value"],
+                    "rows": [[2]],
+                    "row_count": 1,
+                    "truncated": False,
+                },
             },
         )
 
@@ -304,6 +310,7 @@ def test_cli_rejects_malformed_json(tmp_path: Path) -> None:
                 "result": {
                     "columns": ["value"],
                     "rows": [[1]],
+                    "row_count": 1,
                     "truncated": True,
                 },
             },
@@ -317,9 +324,35 @@ def test_cli_rejects_malformed_json(tmp_path: Path) -> None:
                     "columns": ["value"],
                     "rows": [[1]],
                     "row_count": 2,
+                    "truncated": False,
                 },
             },
             "row_count does not match rows",
+        ),
+        (
+            {
+                "question": "Question",
+                "sql": "SELECT 1",
+                "result": {
+                    "columns": ["value"],
+                    "rows": [[1]],
+                    "row_count": 1,
+                },
+            },
+            "truncated must be a boolean",
+        ),
+        (
+            {
+                "question": "Question",
+                "sql": "SELECT 1",
+                "result": {
+                    "columns": ["value"],
+                    "rows": [[1]],
+                    "row_count": True,
+                    "truncated": False,
+                },
+            },
+            "row_count must be a non-negative integer",
         ),
     ],
 )
