@@ -12,16 +12,28 @@ validates them, and replays them against historical transactions. Candidate
 rules are hypotheses for investigation; they are not production fraud
 decisions.
 
-The current system has three main areas:
+The current system has five main areas:
 
 - `backend/`: a Python 3.13 FastAPI application using Strands Agents and Amazon
-  Bedrock. Deterministic services own SQL generation/repair orchestration, rule
-  validation, candidate generation/refinement, and historical backtesting.
+  Bedrock. It owns the stateless chat orchestration, Text2SQL generation/repair,
+  candidate-rule validation and generation/refinement, historical backtesting,
+  and shared evaluation-runner code.
 - `mcp/`: a Python 3.13 FastMCP server that owns schema inspection and the
   read-only SQLite query boundary. It validates SQL, applies limits and
   timeouts, and executes against an in-memory snapshot of the bundled dataset.
-- `terraform/`: AWS infrastructure scaffolding for AgentCore, ECR, IAM, and
-  related deployment work.
+- `frontend/`: a Vite, React, and TypeScript investigation workspace. It owns
+  the browser's bounded conversation history and working state, validates API
+  contracts with strict Zod schemas, and renders typed artifacts and public
+  stream events.
+- `evals/`: versioned evaluation fixtures, schemas, and the Text2SQL HTTP
+  evaluation CLI. The shared deterministic evaluation runner currently lives in
+  `backend/`; keep its cross-package contract explicit when changing either
+  area. Result-correctness oracles compare normalized result semantics, not
+  generated SQL text; retain explicit cohort/null expectations in those cases.
+- `terraform/`: a partial AWS scaffold that currently provisions AgentCore,
+  ECR, and IAM resources. It is not the final deployment architecture: follow
+  [#61](https://github.com/rafaelpierre/sherlock/issues/61) for the unresolved
+  frontend, backend, MCP, and observability runtime design.
 
 The dated files in `specs/` describe the product direction and original
 backlog. GitHub Issues are the current source of truth for delivery status,
@@ -30,19 +42,39 @@ priority, acceptance criteria, and follow-up work.
 ## Architecture and Product Invariants
 
 - The FastAPI backend remains stateless between HTTP requests. The browser owns
-  bounded conversation history and explicit working state.
-- The intended conversational architecture is a `ChatAgent` called by
-  `/v1/chat`. It uses ordinary, service-backed tools for exploration, rule
-  generation, refinement, backtesting, and comparison. Analytical work is
-  performed by an `AnalysisAgent` through the Text2SQL service. Do not introduce
-  hidden server-side handoff state.
+  bounded conversation history, explicit working state, and bounded user-safe
+  activity summaries.
+- A fresh `ChatAgent` handles each `/v1/chat` request and selects exactly one
+  top-level workflow: exploration, candidate-rule generation/refinement,
+  backtesting, or comparison. It must not mix those state transitions in one
+  turn.
+- `EXPLORE` hands off once to a fresh, bounded `AnalysisAgent`. That specialist
+  may perform sequential Text2SQL investigations and synthesize only from their
+  completed evidence; it must use `Text2SQLService`, never a direct database
+  path. Keep its query, model-turn, output, deadline, cancellation, and failure
+  bounds enforced in code rather than by prompt text alone. The remaining
+  cross-workflow budget hardening and cumulative SSE-artifact bound are tracked
+  by [#79](https://github.com/rafaelpierre/sherlock/issues/79) and
+  [#91](https://github.com/rafaelpierre/sherlock/issues/91); do not imply that
+  either is already delivered. Do not introduce hidden server-side conversation,
+  handoff, or plan state.
 - Specialist agents and deterministic services must remain independently
   callable by their domain endpoints. Agent prose is never the authoritative
   representation of rules, metrics, or state.
-- Structured artifacts are returned to clients so the frontend does not need to
-  parse prose.
-- Do not persist raw transaction result sets in browser state. Persist only
-  bounded history, working state, and small summaries.
+- Typed backend artifacts are authoritative. In particular, each successful
+  step in a multi-step exploration produces one ordered `analysis_step` artifact
+  that groups its public question, SQL, and bounded table. Update Pydantic/OpenAPI,
+  frontend Zod schemas, and valid/malformed contract tests together when these
+  contracts change.
+- SSE exposes only product-safe `tool_call`, `tool_result`, `text_delta`,
+  `complete`, and `error` events. The terminal `complete` payload is
+  authoritative for artifacts, metadata, and replacement working state; never
+  expose provider events, model reasoning, raw tool arguments, or unrestricted
+  tool results.
+- Do not persist raw transaction result sets, SQL/table artifacts, partial
+  prose, or provider data in browser storage. Persist only bounded history,
+  working state, and user-safe activity/failure summaries; transient streamed
+  evidence may be absent after reload.
 
 ### SQL and candidate-rule safety
 
@@ -50,8 +82,8 @@ priority, acceptance criteria, and follow-up work.
   execution and must execute through the MCP read-only boundary.
 - Candidate rules are SQL `WHERE` predicates over the canonical
   `fraud_transactions` relation, not arbitrary statements.
-- Outcome-only fields such as `is_fraud` are ground truth for internal metric
-  calculation and must not be usable as candidate-rule features.
+- `is_fraud` is ground truth for exploration and internal metric calculation,
+  but must not be usable as a candidate-rule feature.
 - Preserve MCP query limits, timeouts, single-statement checks, and read-only
   enforcement. Never bypass them for convenience.
 
@@ -210,6 +242,9 @@ cd frontend
 npm ci
 npm run lint
 npm run format:check
+npm run typecheck
+npm run test:coverage
+npm run build
 ```
 
 ### Browser verification
@@ -260,9 +295,12 @@ issues in one PR solely to save review time.
 
 Applicable path-based CI runs on pull requests:
 
-- `Backend CI`: Ruff, ty, Complexipy, and pytest with at least 80% coverage.
-- `MCP CI`: Ruff, ty, and pytest with at least 80% coverage.
-- `Frontend CI`: Oxlint and Oxfmt checks after a locked npm install.
+- `Backend CI`: locked install; Ruff lint, ty, Complexipy, and pytest with at
+  least 80% coverage.
+- `MCP CI`: locked install; Ruff lint, ty, and pytest with at least 80%
+  coverage.
+- `Frontend CI`: locked npm install; Oxlint/ESLint, Oxfmt, TypeScript,
+  coverage tests, and production build.
 - `Evals CI`: Ruff lint/format and pytest with at least 80% coverage.
 - `Codex Review Gate`: requires a Codex review for the exact current head SHA.
 
@@ -270,6 +308,39 @@ The Codex review requirement applies even to documentation-only PRs. GitHub
 branch protection/rulesets are unavailable while this private repository is on
 its current plan, so the workflow check and this file are mandatory process
 controls even when GitHub cannot technically block an override.
+
+### Review baseline
+
+Review every change against both its issue acceptance criteria and these
+cross-cutting principles. Specific issue scope controls what belongs in the PR;
+these checks identify regressions, design flaws, and follow-up work that the
+issue may not have anticipated.
+
+- **Compatibility:** trace affected API, artifact, SSE, persistence, evaluation,
+  configuration, and deployment contracts across their consumers. Version or
+  migrate an intentional breaking change; otherwise preserve compatibility and
+  update both sides of a typed contract together.
+- **Modularity and ownership:** keep orchestration, deterministic domain logic,
+  model behavior, database execution, and UI rendering at their established
+  boundaries. Avoid duplicated business rules, hidden state, inappropriate
+  coupling, and abstractions that obscure a single clear owner.
+- **Maintainability:** look for code smells such as unclear control flow,
+  unbounded or duplicated logic, weak error boundaries, misleading names, and
+  tests that assert implementation accidents rather than observable behavior.
+- **Scalability and resilience:** assess request lifecycles, bounded work,
+  concurrency, timeouts, cancellation, resource cleanup, cache ownership, and
+  failure behavior. Do not rely on a frontend/proxy timeout as the only bound.
+- **Security and data safety:** preserve validation and the MCP read-only query
+  boundary; check authorization, secret handling, injection risks, sensitive
+  data exposure, and reasoning/provider-data leakage. Candidate-rule and cohort
+  safety invariants remain mandatory.
+- **Operational fit:** keep documentation, local commands, CI, observability,
+  and deployment assumptions consistent with the change and its runtime
+  dependencies.
+
+Record valid findings that are out of scope as labelled follow-up issues, as
+described below; do not silently waive a systemic concern just because the
+current feature works.
 
 ### Trigger and wait for Codex
 
