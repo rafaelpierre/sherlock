@@ -38,6 +38,7 @@ from sherlock.services.rule_validation import (
     RuleValidationError,
     RuleValidationResult,
 )
+from sherlock.services.text2sql import QueryExecutionError
 
 METRICS = {
     "population": 100,
@@ -239,6 +240,20 @@ class ThreeQueryAnalysisModel(SingleQueryAnalysisModel):
         return TextResult("Grounded in all three analysis steps.")
 
 
+class RecoveringAnalysisModel(SingleQueryAnalysisModel):
+    async def invoke_async(
+        self,
+        prompt: str,
+        *,
+        limits: Limits,
+        cancel_signal: threading.Event,
+    ) -> TextResult:
+        failed = await self.tool(question="Unavailable evidence")
+        assert failed == {"error": "This evidence query could not be completed."}
+        await self.tool(question="Available evidence")
+        return TextResult("Grounded in the available evidence.")
+
+
 class SequentialQueryWorkflows(StubWorkflows):
     async def query(self, question: str) -> dict[str, Any]:
         self.queries.append(question)
@@ -262,6 +277,25 @@ class WideAnalysisWorkflows(StubWorkflows):
         response = await super().query(question)
         response["result"]["rows"] = [["x" * 135_200]]
         return response
+
+
+class RecoveringAnalysisWorkflows(StubWorkflows):
+    async def query(self, question: str) -> dict[str, Any]:
+        self.queries.append(question)
+        if len(self.queries) == 1:
+            raise QueryExecutionError("MCP connection refused")
+        return {
+            "question": question,
+            "sql": "SELECT 1 AS finding",
+            "result": {
+                "columns": ["finding"],
+                "rows": [[1]],
+                "row_count": 1,
+                "truncated": False,
+            },
+            "attempts": 1,
+            "cached_sql": False,
+        }
 
 
 def single_query_analysis_factory(workflows: StubWorkflows) -> AnalysisAgentFactory:
@@ -499,6 +533,51 @@ def test_explore_stream_emits_coordinator_preamble_before_activity() -> None:
         if name == "text_delta" and isinstance(payload, ChatTextDelta)
     ]
     assert segments == ["introduction", "content"]
+
+
+def test_explore_stream_recovers_after_failed_evidence_and_pairs_every_activity() -> (
+    None
+):
+    workflows = RecoveringAnalysisWorkflows()
+    agent = ChatAgent(
+        workflows,
+        workflows,
+        workflows,
+        workflows,
+        [],
+        WorkingState(),
+        analysis_agent_factory=AnalysisAgentFactory(
+            workflows, model_factory=RecoveringAnalysisModel
+        ),
+        model_factory=ScriptedModelFactory(
+            [("explore", {"question": "Investigate fraud patterns"})]
+        ),
+    )
+
+    events = asyncio.run(collect_stream(agent, "Explore fraud patterns"))
+
+    assert events[-1][0] == "complete"
+    calls = [
+        payload
+        for name, payload in events
+        if name == "tool_call" and isinstance(payload, ChatToolCall)
+    ]
+    results = [
+        payload
+        for name, payload in events
+        if name == "tool_result" and isinstance(payload, ChatToolResult)
+    ]
+    assert {result.id for result in results} == {call.id for call in calls}
+    assert len(results) == len(calls)
+    evidence_results = [
+        result for result in results if result.id.startswith("analysis-query-")
+    ]
+    assert [result.outcome for result in evidence_results] == ["failed", "succeeded"]
+    assert len(evidence_results) == len({result.id for result in evidence_results})
+    complete = events[-1][1]
+    assert isinstance(complete, ChatResponse)
+    assert complete.message == "Grounded in the available evidence."
+    assert [artifact.type for artifact in complete.artifacts] == ["analysis_step"]
 
 
 def test_explore_stream_caps_introduction_and_synthesis_at_client_limit() -> None:

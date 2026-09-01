@@ -230,7 +230,9 @@ def test_cumulative_evidence_limit_counts_utf16_units() -> None:
     assert "evidence limit" in tool_results[0]["error"]
 
 
-def test_partial_failure_is_paired_and_successful_evidence_remains() -> None:
+def test_partial_failure_is_paired_logged_and_successful_evidence_remains(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     service = ScriptedService(failures={1})
     events: list[tuple[str, bool | None]] = []
 
@@ -248,6 +250,12 @@ def test_partial_failure_is_paired_and_successful_evidence_remains() -> None:
         ("analysis-query-2", None),
         ("analysis-query-2", True),
     ]
+    assert '"category":"text2sql_error"' in caplog.text
+    assert '"attempt":1' in caplog.text
+    assert '"successful_steps":0' in caplog.text
+    assert '"exception_type":"QueryExecutionError"' in caplog.text
+    assert "Unavailable dimension" not in caplog.text
+    assert "query unavailable" not in caplog.text
 
 
 def test_all_failed_and_zero_tool_analyses_are_rejected() -> None:

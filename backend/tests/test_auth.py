@@ -119,6 +119,8 @@ async def test_verifier_throttles_refreshes_for_unknown_key_ids(
 ) -> None:
     refreshes = 0
 
+    monkeypatch.setattr("sherlock.api.auth.time.monotonic", lambda: 10.0)
+
     async def refresh_keys() -> None:
         nonlocal refreshes
         refreshes += 1

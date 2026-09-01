@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from sherlock.api.artifacts import AnalysisStepArtifact
 from sherlock.api.chat_models import MAX_ASSISTANT_MESSAGE_LENGTH
 from sherlock.api.schemas import QueryResponse
 from sherlock.services.text2sql import Text2SQLError
+
+LOGGER = logging.getLogger(__name__)
 
 ANALYSIS_SYSTEM_PROMPT = """
 You are Sherlock's fraud-analysis specialist. Investigate the user's analytical
@@ -229,6 +232,7 @@ class AnalysisAgent:
         succeeded = False
         try:
             if not question.strip():
+                _record_evidence_failure(execution, "invalid_question")
                 return {"error": "The analytical question must not be blank."}
             response = QueryResponse.model_validate(
                 await execution.service.query(question.strip())
@@ -256,7 +260,14 @@ class AnalysisAgent:
             succeeded = True
             return step.model_dump(mode="json")
         except (Text2SQLError, ValidationError) as exc:
-            return {"error": str(exc)}
+            _record_evidence_failure(
+                execution,
+                "text2sql_error"
+                if isinstance(exc, Text2SQLError)
+                else "response_validation_error",
+                exc,
+            )
+            return {"error": "This evidence query could not be completed."}
         finally:
             if execution.event_sink is not None:
                 execution.event_sink(activity_id, succeeded)
@@ -293,3 +304,24 @@ def _analysis_artifact_size(steps: list[AnalysisStepArtifact]) -> int:
         separators=(",", ":"),
     )
     return len(serialized.encode("utf-16-le")) // 2
+
+
+def _record_evidence_failure(
+    execution: _AnalysisExecution,
+    category: str,
+    exc: Exception | None = None,
+) -> None:
+    """Log bounded diagnostics without retaining questions, provider data, or rows."""
+
+    LOGGER.warning(
+        "analysis_evidence_query_failed %s",
+        json.dumps(
+            {
+                "category": category,
+                "attempt": execution.attempts,
+                "successful_steps": len(execution.steps),
+                "exception_type": type(exc).__name__[:80] if exc is not None else None,
+            },
+            separators=(",", ":"),
+        ),
+    )

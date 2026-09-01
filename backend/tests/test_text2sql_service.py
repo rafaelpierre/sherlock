@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any, cast
 
 import pytest
@@ -61,6 +62,22 @@ class StubExecutor:
         return next(self.results)
 
 
+class ConcurrentProbeGenerator(FixedSQLGenerator):
+    def __init__(self) -> None:
+        super().__init__("SELECT 1")
+        self.active_generations = 0
+        self.max_active_generations = 0
+
+    async def generate(self, question: str) -> tuple[str, bool]:
+        self.active_generations += 1
+        self.max_active_generations = max(
+            self.max_active_generations, self.active_generations
+        )
+        await asyncio.sleep(0)
+        self.active_generations -= 1
+        return await super().generate(question)
+
+
 def successful_execution(sql: str = "SELECT 1") -> ExecutionResult:
     return ExecutionResult(
         sql=sql,
@@ -91,6 +108,60 @@ def test_successful_query_returns_structured_result() -> None:
     assert result["attempts"] == 1
     assert result["cached_sql"] is False
     assert result["result"]["rows"] == [[10]]
+
+
+def test_concurrent_queries_are_serialized_for_the_shared_mcp_client() -> None:
+    generator = ConcurrentProbeGenerator()
+    service = Text2SQLService(
+        generator, StubExecutor([successful_execution(), successful_execution()])
+    )
+
+    async def run_queries() -> None:
+        await asyncio.gather(
+            service.query("first analytical question"),
+            service.query("second analytical question"),
+        )
+
+    asyncio.run(run_queries())
+
+    assert generator.max_active_generations == 1
+
+
+def test_cancelled_threaded_generation_defers_lock_release_until_worker_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generator = StrandsSQLGenerator(cast(MCPClient, object()))
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    calls = 0
+
+    def invoke_agent(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        worker_started.set()
+        release_worker.wait(timeout=1)
+        return "SELECT 1"
+
+    monkeypatch.setattr(generator, "_invoke_agent", invoke_agent)
+    service = Text2SQLService(generator, StubExecutor([successful_execution()]))
+
+    async def run_queries() -> None:
+        first = asyncio.create_task(service.query("first question"))
+        assert await asyncio.to_thread(worker_started.wait, 1)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+        second = asyncio.create_task(service.query("second question"))
+        await asyncio.sleep(0)
+
+        assert calls == 1
+        assert not second.done()
+
+        release_worker.set()
+        await second
+
+    asyncio.run(run_queries())
 
 
 @pytest.mark.parametrize("sql_length", [MAX_SQL_LENGTH - 1, MAX_SQL_LENGTH])

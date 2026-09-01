@@ -96,10 +96,11 @@ class StrandsSQLGenerator:
         self._client = client
         self._model = model
         self._generate_cached = lru_cache(maxsize=256)(self._generate_uncached)
+        self._active_worker: asyncio.Task[str] | None = None
 
     async def generate(self, question: str) -> tuple[str, bool]:
         before = self._generate_cached.cache_info()
-        sql = await run_blocking_provider_call(self._generate_cached, question)
+        sql = await self._run_threaded(lambda: self._generate_cached(question))
         after = self._generate_cached.cache_info()
         return sql, after.hits > before.hits
 
@@ -115,7 +116,26 @@ class StrandsSQLGenerator:
             f"Execution error:\n{json.dumps(error, sort_keys=True)}\n\n"
             "Produce a corrected query. Inspect the schema again if necessary."
         )
-        return await run_blocking_provider_call(self._invoke_agent, prompt)
+        return await self._run_threaded(lambda: self._invoke_agent(prompt))
+
+    def pending_worker_task(self) -> asyncio.Task[str] | None:
+        """Return unfinished agent work so the shared query lock can drain safely."""
+
+        task = self._active_worker
+        return task if task is not None and not task.done() else None
+
+    async def _run_threaded(self, operation: Callable[[], str]) -> str:
+        return await run_blocking_provider_call(
+            operation, task_started=self._remember_worker
+        )
+
+    def _remember_worker(self, task: asyncio.Task[str]) -> None:
+        self._active_worker = task
+        task.add_done_callback(self._forget_worker)
+
+    def _forget_worker(self, task: asyncio.Task[str]) -> None:
+        if self._active_worker is task:
+            self._active_worker = None
 
     def _generate_uncached(self, question: str) -> str:
         return _require_bounded_sql(self._invoke_agent(question))
@@ -193,6 +213,7 @@ class Text2SQLService:
         self._start_callback = start_callback
         self._close_callback = close_callback
         self._start_lock = asyncio.Lock()
+        self._query_lock = asyncio.Lock()
         self._started = False
 
     async def start(self) -> None:
@@ -208,37 +229,56 @@ class Text2SQLService:
             self._started = True
 
     async def query(self, question: str) -> dict[str, Any]:
-        await self.start()
-        sql, cached_sql = await self._generator.generate(question)
-        sql = _require_bounded_sql(sql)
+        """Run one complete generate-and-execute transaction at a time.
 
-        for attempt in range(1, self._max_attempts + 1):
-            execution = await self._executor.execute(sql)
-            if execution.data is not None:
-                try:
-                    normalized_sql = _require_bounded_sql(execution.sql)
-                except SQLGenerationError:
-                    self._clear_generator_cache()
-                    raise
-                return asdict(
-                    Text2SQLResult(
-                        question=question,
-                        sql=normalized_sql,
-                        result=execution.data,
-                        attempts=attempt,
-                        cached_sql=cached_sql,
-                    )
-                )
+        The MCP client is shared by the application service and the analysis model
+        may request multiple evidence calls in one model turn. Serializing the full
+        transaction prevents one generator agent's lifecycle from racing another
+        query against the same client session.
+        """
 
-            error = execution.error or {}
-            error_type = error.get("type")
-            if error_type not in REPAIRABLE_ERRORS or attempt == self._max_attempts:
-                message = error.get("message", "The generated query could not run.")
-                raise QueryExecutionError(str(message))
-            sql = await self._generator.repair(question, sql, error)
+        await self._query_lock.acquire()
+        release_lock = True
+        try:
+            await self.start()
+            sql, cached_sql = await self._generator.generate(question)
             sql = _require_bounded_sql(sql)
 
-        raise AssertionError("unreachable")
+            for attempt in range(1, self._max_attempts + 1):
+                execution = await self._executor.execute(sql)
+                if execution.data is not None:
+                    try:
+                        normalized_sql = _require_bounded_sql(execution.sql)
+                    except SQLGenerationError:
+                        self._clear_generator_cache()
+                        raise
+                    return asdict(
+                        Text2SQLResult(
+                            question=question,
+                            sql=normalized_sql,
+                            result=execution.data,
+                            attempts=attempt,
+                            cached_sql=cached_sql,
+                        )
+                    )
+
+                error = execution.error or {}
+                error_type = error.get("type")
+                if error_type not in REPAIRABLE_ERRORS or attempt == self._max_attempts:
+                    message = error.get("message", "The generated query could not run.")
+                    raise QueryExecutionError(str(message))
+                sql = await self._generator.repair(question, sql, error)
+                sql = _require_bounded_sql(sql)
+            raise AssertionError("unreachable")
+        except asyncio.CancelledError:
+            worker = _pending_generator_worker(self._generator)
+            if worker is not None:
+                release_lock = False
+                worker.add_done_callback(self._release_query_lock)
+            raise
+        finally:
+            if release_lock:
+                self._query_lock.release()
 
     def close(self) -> None:
         self._clear_generator_cache()
@@ -249,6 +289,15 @@ class Text2SQLService:
         clear_cache = getattr(self._generator, "clear_cache", None)
         if clear_cache is not None:
             clear_cache()
+
+    def _release_query_lock(self, _: asyncio.Task[Any]) -> None:
+        self._query_lock.release()
+
+
+def _pending_generator_worker(generator: SQLGenerator) -> asyncio.Task[Any] | None:
+    pending_worker = getattr(generator, "pending_worker_task", None)
+    task = pending_worker() if callable(pending_worker) else None
+    return task if isinstance(task, asyncio.Task) and not task.done() else None
 
 
 def create_text2sql_service(

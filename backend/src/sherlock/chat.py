@@ -199,10 +199,10 @@ class _ChatExecution:
     def finish_activity(
         self, tool_name: str, activity_id: str | None, *, succeeded: bool = True
     ) -> None:
-        if self.event_sink is None or activity_id is None:
+        if activity_id is None:
             return
         active_tool_name = self.active_activities.pop(activity_id, None)
-        if active_tool_name is None:
+        if active_tool_name is None or self.event_sink is None:
             return
         message = (
             _ACTIVITY_COPY[active_tool_name][3]
