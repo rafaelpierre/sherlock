@@ -50,7 +50,7 @@ from sherlock.services.rule_generation import (
     RuleGenerationService,
 )
 from sherlock.services.text2sql import Text2SQLError, Text2SQLService
-from sherlock.telemetry import CHAT_TURN_SPAN, span
+from sherlock.telemetry import CHAT_TURN_SPAN, SpanOutcome, span
 
 router = APIRouter(prefix="/v1")
 
@@ -219,11 +219,14 @@ def _sse(event: str, payload: BaseModel) -> str:
 
 async def _chat_event_stream(
     events: AsyncIterator[tuple[str, BaseModel]],
+    outcome: SpanOutcome | None = None,
 ) -> AsyncIterator[str]:
     try:
         async for event, payload in events:
             yield _sse(event, payload)
     except MissingChatState as exc:
+        if outcome is not None:
+            outcome.fail(exc)
         if "candidate_rule" in exc.missing_fields:
             message = "Create or select a candidate rule before running this activity."
         else:
@@ -231,7 +234,9 @@ async def _chat_event_stream(
                 "A previous candidate rule is needed before Sherlock can compare rules."
             )
         yield _sse("error", ChatStreamError(message=message))
-    except InvalidChatState:
+    except InvalidChatState as exc:
+        if outcome is not None:
+            outcome.fail(exc)
         yield _sse(
             "error",
             ChatStreamError(
@@ -241,7 +246,9 @@ async def _chat_event_stream(
                 )
             ),
         )
-    except ChatAgentError:
+    except ChatAgentError as exc:
+        if outcome is not None:
+            outcome.fail(exc)
         yield _sse(
             "error",
             ChatStreamError(
@@ -255,15 +262,17 @@ async def _traced_chat_event_stream(
 ) -> AsyncIterator[str]:
     """Keep the root span open for the full SSE turn, including cancellation."""
 
+    outcome = SpanOutcome()
     async with (
         span(
             CHAT_TURN_SPAN,
             attributes={"sherlock.chat.history_messages": history_messages},
             kind=SpanKind.SERVER,
+            outcome=outcome,
         ),
-        span("sherlock.chat.agent"),
+        span("sherlock.chat.agent", outcome=outcome),
     ):
-        async for event in _chat_event_stream(events):
+        async for event in _chat_event_stream(events, outcome):
             yield event
 
 

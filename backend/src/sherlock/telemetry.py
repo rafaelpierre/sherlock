@@ -6,6 +6,7 @@ import logging
 import os
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -36,6 +37,16 @@ _OTEL_DEFAULTS = {
     # Strands honours this setting by redacting prompt, model, and tool content.
     "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_unredacted_attributes=",
 }
+
+
+@dataclass
+class SpanOutcome:
+    """A safe failure signal for a handled error that must not be re-raised."""
+
+    error_type: str | None = None
+
+    def fail(self, exception: BaseException) -> None:
+        self.error_type = type(exception).__name__
 
 
 def _phoenix_configuration(settings: Settings) -> tuple[str, str] | None:
@@ -121,11 +132,17 @@ async def span(
     *,
     attributes: Mapping[str, str | int | bool] | None = None,
     kind: SpanKind = SpanKind.INTERNAL,
+    outcome: SpanOutcome | None = None,
 ) -> AsyncIterator[None]:
     """Create a safe nested span and record only the exception class on failure."""
 
     tracer = trace.get_tracer(TRACER_NAME)
-    with tracer.start_as_current_span(name, kind=kind) as current:
+    with tracer.start_as_current_span(
+        name,
+        kind=kind,
+        record_exception=False,
+        set_status_on_exception=False,
+    ) as current:
         if attributes:
             current.set_attributes(attributes)
         try:
@@ -135,4 +152,8 @@ async def span(
             current.set_attribute("error.type", type(exc).__name__)
             raise
         else:
-            current.set_status(StatusCode.OK)
+            if outcome is not None and outcome.error_type is not None:
+                current.set_status(StatusCode.ERROR, outcome.error_type)
+                current.set_attribute("error.type", outcome.error_type)
+            else:
+                current.set_status(StatusCode.OK)
