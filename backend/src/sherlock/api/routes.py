@@ -61,6 +61,62 @@ from sherlock.services.text2sql import Text2SQLError, Text2SQLService
 from sherlock.telemetry import CHAT_TURN_SPAN, SpanOutcome, span
 
 router = APIRouter(prefix="/v1")
+MAX_STREAM_BUFFERED_EVENTS = 8
+MAX_STREAM_BUFFERED_BYTES = 256_000
+
+
+class StreamBufferFull(RuntimeError):
+    """The SSE writer cannot safely retain more producer output."""
+
+
+class StreamBuffer:
+    """A bounded producer-to-writer buffer with an out-of-band terminal event."""
+
+    def __init__(self) -> None:
+        self._events: asyncio.Queue[str] = asyncio.Queue(MAX_STREAM_BUFFERED_EVENTS)
+        self._buffered_bytes = 0
+        self._closed = asyncio.Event()
+        self.terminal_event: str | None = None
+
+    def put(self, event: str) -> None:
+        event_bytes = len(event.encode("utf-8"))
+        if (
+            self._events.full()
+            or self._buffered_bytes + event_bytes > MAX_STREAM_BUFFERED_BYTES
+        ):
+            raise StreamBufferFull
+        self._events.put_nowait(event)
+        self._buffered_bytes += event_bytes
+
+    def close(self, terminal_event: str | None = None) -> None:
+        if terminal_event is not None:
+            self.terminal_event = terminal_event
+        self._closed.set()
+
+    async def get(self) -> str | None:
+        while True:
+            try:
+                return self._take_nowait()
+            except asyncio.QueueEmpty:
+                if self._closed.is_set():
+                    return None
+            event_wait = asyncio.create_task(self._events.get())
+            close_wait = asyncio.create_task(self._closed.wait())
+            done, pending = await asyncio.wait(
+                (event_wait, close_wait), return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if event_wait in done:
+                event = event_wait.result()
+                self._buffered_bytes -= len(event.encode("utf-8"))
+                return event
+
+    def _take_nowait(self) -> str:
+        event = self._events.get_nowait()
+        self._buffered_bytes -= len(event.encode("utf-8"))
+        return event
 
 
 def _media_range_quality(parameters: list[str]) -> float:
@@ -215,13 +271,13 @@ async def chat(
         )
     try:
         async with (
-            controller.workflow(WorkflowKind.CHAT),
             span(
                 CHAT_TURN_SPAN,
                 attributes={"sherlock.chat.history_messages": len(request.history)},
                 kind=SpanKind.SERVER,
             ),
             span("sherlock.chat.agent"),
+            controller.workflow(WorkflowKind.CHAT),
         ):
             return await agent.respond(request.message)
     except (WorkflowOverloaded, WorkflowDeadlineExceeded) as exc:
@@ -319,13 +375,15 @@ async def _traced_chat_event_stream(
 ) -> AsyncIterator[str]:
     """Write completed producer events without putting response writes on its clock."""
 
-    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    buffer = StreamBuffer()
     producer = asyncio.create_task(
-        _produce_chat_events(events, history_messages, lease, queue)
+        _produce_chat_events(events, history_messages, lease, buffer)
     )
     try:
-        while (event := await queue.get()) is not None:
+        while (event := await buffer.get()) is not None:
             yield event
+        if buffer.terminal_event is not None:
+            yield buffer.terminal_event
     finally:
         if not producer.done():
             producer.cancel()
@@ -336,7 +394,7 @@ async def _produce_chat_events(
     events: AsyncIterator[tuple[str, BaseModel]],
     history_messages: int,
     lease: WorkflowLease,
-    queue: asyncio.Queue[str | None],
+    buffer: StreamBuffer,
 ) -> None:
     """Run the deadline-bound workflow independently from ASGI response writes."""
 
@@ -356,10 +414,21 @@ async def _produce_chat_events(
                     async for event in _chat_event_stream(
                         events, outcome, lease.mark_failed
                     ):
-                        queue.put_nowait(event)
+                        buffer.put(event)
+            except StreamBufferFull as exc:
+                lease.mark_failed()
+                outcome.fail(exc)
+                buffer.close(
+                    _sse(
+                        "error",
+                        ChatStreamError(
+                            message="Sherlock could not complete the request. Please try again."
+                        ),
+                    )
+                )
             except WorkflowDeadlineExceeded as exc:
                 outcome.fail(exc)
-                queue.put_nowait(
+                buffer.close(
                     _sse(
                         "error",
                         ChatStreamError(
@@ -368,7 +437,7 @@ async def _produce_chat_events(
                     )
                 )
     finally:
-        queue.put_nowait(None)
+        buffer.close()
 
 
 @router.post("/rules/generate", response_model=RuleGenerateResponse)

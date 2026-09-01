@@ -9,7 +9,14 @@ import pytest
 from fastapi import HTTPException
 
 from sherlock.api.chat_models import ChatTextDelta
-from sherlock.api.routes import _traced_chat_event_stream, query
+from sherlock.api.routes import (
+    MAX_STREAM_BUFFERED_BYTES,
+    MAX_STREAM_BUFFERED_EVENTS,
+    StreamBuffer,
+    StreamBufferFull,
+    _traced_chat_event_stream,
+    query,
+)
 from sherlock.api.schemas import QueryRequest
 from sherlock.chat import ChatAgentError
 from sherlock.execution import (
@@ -227,3 +234,16 @@ def test_handled_sse_error_has_a_failed_telemetry_outcome(
 
     assert "event: error" in emitted[0]
     assert "kind=chat outcome=failed elapsed_ms=" in caplog.text
+
+
+def test_sse_buffer_bounds_events_and_bytes() -> None:
+    buffer = StreamBuffer()
+    for _ in range(MAX_STREAM_BUFFERED_EVENTS):
+        buffer.put("event")
+
+    with pytest.raises(StreamBufferFull):
+        buffer.put("one event too many")
+
+    bytes_buffer = StreamBuffer()
+    with pytest.raises(StreamBufferFull):
+        bytes_buffer.put("x" * (MAX_STREAM_BUFFERED_BYTES + 1))
