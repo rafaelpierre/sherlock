@@ -78,6 +78,9 @@ class AgentCoreMcpSmokeTestTests(unittest.TestCase):
         self.assertIn("--mcp-name", command)
         self.assertIn("get_schema", command)
         self.assertIn("--mcp-session-id", command)
+        self.assertEqual(
+            command[command.index("--accept") + 1], SMOKE_TEST.ACCEPT_HEADER
+        )
         self.assertIn("--cli-connect-timeout", command)
         self.assertIn("--cli-read-timeout", command)
         self.assertNotIn("run_query", command)
@@ -118,6 +121,18 @@ class AgentCoreMcpSmokeTestTests(unittest.TestCase):
             with self.subTest(operation=operation):
                 with self.assertRaisesRegex(SMOKE_TEST.SmokeTestError, operation):
                     SMOKE_TEST._validate_response({"result": {}}, operation)
+
+    def test_streamable_http_response_is_parsed_without_logging_payload(self) -> None:
+        with TemporaryDirectory() as directory:
+            response_path = Path(directory) / "response.txt"
+            response_path.write_text(
+                "event: message\n"
+                'data: {"jsonrpc":"2.0","result":{"protocolVersion":"2025-03-26"}}\n\n'
+            )
+
+            response = SMOKE_TEST._parse_response(response_path, "initialize")
+
+        self.assertEqual(response["result"]["protocolVersion"], "2025-03-26")
 
     def test_tool_result_requires_expected_safe_metadata_shape(self) -> None:
         malformed_schema = _valid_result("get_schema")

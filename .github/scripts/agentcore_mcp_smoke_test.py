@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
+ACCEPT_HEADER = "application/json, text/event-stream"
 CLIENT_INFO = {
     "name": "sherlock-deployment-smoke-test",
     "version": "1.0",
@@ -62,7 +63,7 @@ def _command(
         "--content-type",
         "application/json",
         "--accept",
-        "application/json",
+        ACCEPT_HEADER,
         "--runtime-session-id",
         runtime_session_id,
         "--mcp-protocol-version",
@@ -85,18 +86,49 @@ def _command(
     return command
 
 
-def _parse_json(path: Path, operation: str) -> dict[str, Any]:
+def _parse_response(path: Path, operation: str) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        response_body = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
         raise SmokeTestError(
             f"AgentCore MCP smoke test returned an invalid {operation} response."
         ) from error
-    if not isinstance(value, dict):
-        raise SmokeTestError(
-            f"AgentCore MCP smoke test returned an invalid {operation} response."
+
+    response_body = response_body.replace("\r\n", "\n")
+    value = _json_object(response_body)
+    if value is not None:
+        return value
+    for event in response_body.split("\n\n"):
+        event_data = "\n".join(
+            line.removeprefix("data: ")
+            for line in event.splitlines()
+            if line.startswith("data: ")
         )
-    return value
+        value = _json_object(event_data)
+        if value is not None:
+            return value
+    raise SmokeTestError(
+        f"AgentCore MCP smoke test returned an invalid {operation} response."
+    )
+
+
+def _json_object(value: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+def _parse_json_from_text(value: str, operation: str) -> dict[str, Any]:
+    parsed = _json_object(value)
+    if parsed is None:
+        raise SmokeTestError(
+            f"AgentCore MCP smoke test returned invalid {operation} metadata."
+        )
+    return parsed
 
 
 def _validate_response(response: dict[str, Any], operation: str) -> None:
@@ -226,28 +258,14 @@ def _invoke(
             f"(AWS CLI exit code {completed.returncode})."
         )
 
-    _validate_response(_parse_json(response_path, operation), operation)
     metadata = _parse_json_from_text(completed.stdout, operation)
+    _validate_response(_parse_response(response_path, operation), operation)
     session_id = metadata.get("mcpSessionId")
     if session_id is not None and not isinstance(session_id, str):
         raise SmokeTestError(
             f"AgentCore MCP smoke test returned an invalid {operation} session."
         )
     return session_id
-
-
-def _parse_json_from_text(value: str, operation: str) -> dict[str, Any]:
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError as error:
-        raise SmokeTestError(
-            f"AgentCore MCP smoke test returned invalid {operation} metadata."
-        ) from error
-    if not isinstance(parsed, dict):
-        raise SmokeTestError(
-            f"AgentCore MCP smoke test returned invalid {operation} metadata."
-        )
-    return parsed
 
 
 def run_smoke_test(runtime_arn: str, *, runner: Runner = subprocess.run) -> None:
