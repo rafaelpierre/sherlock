@@ -1,4 +1,6 @@
 flowchart TB
+    accTitle: Sherlock agentic architecture
+    accDescr: A chat request enters the ChatAgent, which selects one workflow: exploration, rule generation or refinement, backtesting, or comparison. These workflows use bounded services, validation, and an MCP client to access a read-only SQLite snapshot, then produce typed artifacts in the authoritative complete payload.
     Request[Chat request: message, <=20 history items, working state] --> O[ChatAgent orchestrator]
     O --> I{Select exactly one intent}
     I -->|EXPLORE| H[One handoff to fresh AnalysisAgent]

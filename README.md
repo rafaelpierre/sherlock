@@ -84,7 +84,9 @@ It classifies the request and selects exactly one top-level workflow. That
 choice is a coded boundary: the agent cannot mix exploration, rule mutation,
 backtesting, and comparison in a single turn.
 
-![Agentic architecture diagram](docs/diagrams/agentic-architecture.svg)
+![ChatAgent selects one workflow—exploration, rule generation or refinement, backtesting, or comparison—which produces typed artifacts through bounded services and read-only MCP data access.](docs/diagrams/agentic-architecture.svg)
+
+[*Mermaid source*](docs/diagrams/agentic-architecture.mmd)
 
 ### Orchestrator, handoff, and tools
 
@@ -94,7 +96,9 @@ to a fresh specialist. The `AnalysisAgent` may ask sequential follow-up
 questions based on completed evidence, but it cannot execute SQL itself: it
 uses `Text2SQLService`, which owns the narrow MCP capability.
 
-![Exploration handoff sequence diagram](docs/diagrams/exploration-handoff.svg)
+![ChatAgent validates state and hands an exploration request to AnalysisAgent once; the specialist gathers bounded evidence through Text2SQLService and MCP before the terminal SSE complete event.](docs/diagrams/exploration-handoff.svg)
+
+[*Mermaid source*](docs/diagrams/exploration-handoff.mmd)
 
 MCP tools are capability-scoped. A SQL-generation agent may inspect schema and
 bounded samples, while deterministic service code calls `run_query`; the model
@@ -114,7 +118,9 @@ an allow-list per use case, and the server independently validates every call.
 That two-sided capability boundary means a compromised prompt or over-eager
 agent cannot turn tool calling into unrestricted data access.
 
-![MCP capability layer diagram](docs/diagrams/mcp-capability-layer.svg)
+![SQL-generation and analysis agents acquire schema, sample values, and validated read-only query results through the allow-listed MCP capability layer.](docs/diagrams/mcp-capability-layer.svg)
+
+[*Mermaid source*](docs/diagrams/mcp-capability-layer.mmd)
 
 ### State and streaming contract
 
@@ -150,7 +156,9 @@ tool spans inherit its trace context and are batch-exported over OTLP/HTTP to
 Arize Phoenix. Exporting fails open: unavailable or invalid credentials disable
 tracing without blocking application startup or altering an API response.
 
-![Phoenix telemetry diagram](docs/diagrams/phoenix-telemetry.svg)
+![A FastAPI chat span contains workflow and GenAI spans, then exports telemetry to Arize Phoenix using endpoint and API-key secrets from AWS Secrets Manager.](docs/diagrams/phoenix-telemetry.svg)
+
+[*Mermaid source*](docs/diagrams/phoenix-telemetry.mmd)
 
 The deployed backend receives only the secret identifier. On startup it reads
 the Phoenix endpoint and API key, configures the standard OTLP exporter, and
@@ -164,7 +172,9 @@ The cloud deployment is intentionally shown at a high level, separately from
 the agent design. Frontend and backend run as separate ECS Express Mode
 services; the MCP server runs as an Amazon Bedrock AgentCore Runtime.
 
-![AWS architecture diagram](docs/diagrams/aws-architecture.svg)
+![The browser reaches an ECS Express frontend, which proxies to an ECS Express FastAPI and Bedrock backend; the backend invokes AgentCore MCP, accesses SQLite, exports to Phoenix, and uses AWS Secrets Manager.](docs/diagrams/aws-architecture.svg)
+
+[*Mermaid source*](docs/diagrams/aws-architecture.mmd)
 
 ECS Express is a good fit for the backend because it retains the flexibility of
 a conventional FastAPI service: explicitly versioned HTTP endpoints, request

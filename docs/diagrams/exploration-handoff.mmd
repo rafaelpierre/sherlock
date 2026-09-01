@@ -1,4 +1,6 @@
 sequenceDiagram
+    accTitle: Bounded exploration handoff
+    accDescr: The browser sends an exploration request to ChatAgent, which validates browser state and hands off once to AnalysisAgent. The specialist asks bounded evidence questions through Text2SQLService and MCP, then returns ordered evidence artifacts for an authoritative terminal SSE complete event.
     participant F as FSM/browser
     participant O as ChatAgent
     participant A as AnalysisAgent

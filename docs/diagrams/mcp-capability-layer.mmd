@@ -1,4 +1,6 @@
 flowchart LR
+    accTitle: MCP capability layer
+    accDescr: SQL-generation and analysis agents request evidence through Text2SQLService. An allow-listed MCP capability layer exposes schema, bounded sample values, and validated read-only queries over an in-memory SQLite snapshot with SQL row and time limits.
     Agent[SQL-generation or AnalysisAgent] -->|requested evidence| Service[Text2SQLService]
     Service -->|allow-listed MCP call| Tools{MCP capability layer}
     Tools --> Schema[get_schema]
