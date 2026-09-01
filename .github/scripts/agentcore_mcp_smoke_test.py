@@ -105,6 +105,90 @@ def _validate_response(response: dict[str, Any], operation: str) -> None:
         raise SmokeTestError(f"AgentCore MCP smoke test failed during {operation}.")
     if result.get("isError") is True:
         raise SmokeTestError(f"AgentCore MCP smoke test failed during {operation}.")
+    if operation == "initialize":
+        _validate_initialize_result(result)
+        return
+    _validate_tool_result(result, operation)
+
+
+def _validate_initialize_result(result: dict[str, Any]) -> None:
+    server_info = result.get("serverInfo")
+    if (
+        result.get("protocolVersion") != MCP_PROTOCOL_VERSION
+        or not isinstance(result.get("capabilities"), dict)
+        or not isinstance(server_info, dict)
+        or not isinstance(server_info.get("name"), str)
+        or not server_info["name"]
+        or not isinstance(server_info.get("version"), str)
+        or not server_info["version"]
+    ):
+        raise SmokeTestError("AgentCore MCP smoke test failed during initialize.")
+
+
+def _validate_tool_result(result: dict[str, Any], operation: str) -> None:
+    content = result.get("content")
+    structured_content = result.get("structuredContent")
+    if (
+        not isinstance(content, list)
+        or not content
+        or not isinstance(structured_content, dict)
+    ):
+        raise SmokeTestError(f"AgentCore MCP smoke test failed during {operation}.")
+    if not any(
+        isinstance(item, dict)
+        and item.get("type") == "text"
+        and isinstance(item.get("text"), str)
+        and item["text"]
+        for item in content
+    ):
+        raise SmokeTestError(f"AgentCore MCP smoke test failed during {operation}.")
+    if operation == "get_schema":
+        _validate_schema(structured_content)
+    elif operation == "get_database_info":
+        _validate_database_info(structured_content)
+    else:
+        raise SmokeTestError(f"AgentCore MCP smoke test failed during {operation}.")
+
+
+def _validate_schema(structured_content: dict[str, Any]) -> None:
+    relations = structured_content.get("relations")
+    if (
+        structured_content.get("recommended_relation") != "fraud_transactions"
+        or not isinstance(relations, list)
+        or not any(
+            isinstance(relation, dict)
+            and relation.get("name") == "fraud_transactions"
+            and isinstance(relation.get("columns"), list)
+            and relation["columns"]
+            for relation in relations
+        )
+    ):
+        raise SmokeTestError("AgentCore MCP smoke test failed during get_schema.")
+
+
+def _validate_database_info(structured_content: dict[str, Any]) -> None:
+    count_fields = (
+        "transaction_count",
+        "fraud_count",
+        "non_fraud_count",
+        "unlabelled_count",
+    )
+    if (
+        structured_content.get("canonical_relation") != "fraud_transactions"
+        or structured_content.get("read_only") is not True
+        or not all(
+            isinstance(structured_content.get(field), int)
+            and structured_content[field] >= 0
+            for field in count_fields
+        )
+        or not isinstance(structured_content.get("date_min"), str)
+        or not structured_content["date_min"]
+        or not isinstance(structured_content.get("date_max"), str)
+        or not structured_content["date_max"]
+    ):
+        raise SmokeTestError(
+            "AgentCore MCP smoke test failed during get_database_info."
+        )
 
 
 def _invoke(

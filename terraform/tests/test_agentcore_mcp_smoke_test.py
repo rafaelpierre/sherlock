@@ -24,6 +24,40 @@ SMOKE_TEST = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SMOKE_TEST)
 
 
+def _valid_result(operation: str) -> dict[str, object]:
+    if operation == "initialize":
+        return {
+            "protocolVersion": SMOKE_TEST.MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "serverInfo": {"name": "Fraud Analytics", "version": "0.1.0"},
+        }
+    if operation == "get_schema":
+        structured_content: dict[str, object] = {
+            "recommended_relation": "fraud_transactions",
+            "relations": [
+                {
+                    "name": "fraud_transactions",
+                    "columns": [{"name": "transaction_id"}],
+                }
+            ],
+        }
+    else:
+        structured_content = {
+            "canonical_relation": "fraud_transactions",
+            "read_only": True,
+            "transaction_count": 1,
+            "fraud_count": 0,
+            "non_fraud_count": 1,
+            "unlabelled_count": 0,
+            "date_min": "2019-01-01T00:00:00",
+            "date_max": "2019-01-01T00:00:00",
+        }
+    return {
+        "content": [{"type": "text", "text": "validated metadata"}],
+        "structuredContent": structured_content,
+    }
+
+
 class AgentCoreMcpSmokeTestTests(unittest.TestCase):
     def test_command_targets_the_runtime_and_bounded_mcp_tool_call(self) -> None:
         command = SMOKE_TEST._command(
@@ -54,7 +88,16 @@ class AgentCoreMcpSmokeTestTests(unittest.TestCase):
         def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             commands.append(command)
             response_path = Path(command[-1])
-            response_path.write_text(json.dumps({"jsonrpc": "2.0", "result": {}}))
+            operation = (
+                "initialize"
+                if "initialize" in command
+                else "get_schema"
+                if "get_schema" in command
+                else "get_database_info"
+            )
+            response_path.write_text(
+                json.dumps({"jsonrpc": "2.0", "result": _valid_result(operation)})
+            )
             return subprocess.CompletedProcess(
                 command,
                 0,
@@ -69,6 +112,28 @@ class AgentCoreMcpSmokeTestTests(unittest.TestCase):
         self.assertIn("get_database_info", commands[2])
         self.assertIn("agentcore-session", commands[1])
         self.assertIn("agentcore-session", commands[2])
+
+    def test_empty_result_fails_for_each_smoke_operation(self) -> None:
+        for operation in ("initialize", "get_schema", "get_database_info"):
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(SMOKE_TEST.SmokeTestError, operation):
+                    SMOKE_TEST._validate_response({"result": {}}, operation)
+
+    def test_tool_result_requires_expected_safe_metadata_shape(self) -> None:
+        malformed_schema = _valid_result("get_schema")
+        malformed_schema["structuredContent"] = {"relations": []}
+        malformed_database_info = _valid_result("get_database_info")
+        malformed_database_info["structuredContent"] = {
+            "canonical_relation": "fraud_transactions",
+            "read_only": True,
+        }
+
+        with self.assertRaisesRegex(SMOKE_TEST.SmokeTestError, "get_schema"):
+            SMOKE_TEST._validate_response({"result": malformed_schema}, "get_schema")
+        with self.assertRaisesRegex(SMOKE_TEST.SmokeTestError, "get_database_info"):
+            SMOKE_TEST._validate_response(
+                {"result": malformed_database_info}, "get_database_info"
+            )
 
     def test_failed_invocation_uses_safe_diagnostic_without_cli_output(self) -> None:
         with TemporaryDirectory() as directory:
