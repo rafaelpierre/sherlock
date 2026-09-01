@@ -229,9 +229,10 @@ the **Sync Phoenix OpenTelemetry secret** workflow once from `main`:
   `/v1/traces`.
 
 The workflow stores a JSON secret with those two keys. At startup the backend
-sets `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
-`OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <key>` from that secret, then
-uses the standard OTLP/HTTP exporter. The task definition supplies bounded
+passes the endpoint and bearer credential directly to the standard OTLP/HTTP
+exporter. This avoids the OTLP environment-header parser, which requires
+URL-encoded values and would otherwise discard an ordinary bearer token. The
+task definition supplies bounded
 batch processing (5 second delay, 512-span batches, 2,048-span queue), 10
 second export timeouts, parent-based sampling, and HTTP/protobuf. The Python
 OTLP exporter performs its built-in bounded exponential retry behaviour.

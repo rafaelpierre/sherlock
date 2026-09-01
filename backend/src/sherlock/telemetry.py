@@ -112,12 +112,16 @@ def configure_tracing(settings: Settings) -> None:
         return
     endpoint, api_key = configuration
     try:
-        # Use the standard OTLP environment contract so the exporter, batch
-        # processor, and deployment configuration are all inspectable without
-        # coupling Sherlock to Phoenix's client library. Do not log either value.
-        os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = endpoint
-        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Bearer {api_key}"
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        # Pass credentials directly to the standard exporter. Its environment
+        # header parser requires URL-encoded values, so an ordinary bearer
+        # token such as ``Authorization=Bearer <key>`` is silently rejected.
+        # Direct arguments also avoid retaining credentials in process-wide
+        # environment variables. Do not log either value.
+        exporter = OTLPSpanExporter(
+            endpoint=endpoint,
+            headers={"authorization": f"Bearer {api_key}"},
+        )
+        provider.add_span_processor(BatchSpanProcessor(exporter))
     except Exception:  # noqa: BLE001 - defensive vendor boundary
         logger.warning("Phoenix tracing is disabled: exporter setup failed")
 
