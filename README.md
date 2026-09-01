@@ -202,7 +202,9 @@ endpoint, TLS termination, logging, health checks, and one-task deployment
 defaults. The browser service proxies `/v1` to the backend service. The MCP
 server runs as an ARM64 MCP-protocol Amazon Bedrock AgentCore Runtime; the
 backend task uses its ECS task identity to invoke it, so no AWS access keys are
-stored in an image or workflow secret.
+stored in an image or workflow secret. The Terraform module explicitly sets
+ECS Express's `AVERAGE_CPU` scaling metric and target value of `60`, matching
+the service defaults returned by AWS and keeping apply state convergent.
 
 Bootstrap the account once from a workstation with AWS administrator access:
 

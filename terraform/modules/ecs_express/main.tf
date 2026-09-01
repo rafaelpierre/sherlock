@@ -128,8 +128,12 @@ resource "aws_ecs_express_gateway_service" "this" {
   }
 
   scaling_target {
-    min_task_count = var.minimum_task_count
-    max_task_count = var.maximum_task_count
+    # ECS Express supplies these defaults when omitted. Set them explicitly so
+    # the Terraform plan matches the service returned by AWS after creation.
+    auto_scaling_metric       = "AVERAGE_CPU"
+    auto_scaling_target_value = 60
+    min_task_count            = var.minimum_task_count
+    max_task_count            = var.maximum_task_count
   }
 
   depends_on = [
