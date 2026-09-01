@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any, cast
 
 import pytest
@@ -124,6 +125,42 @@ def test_concurrent_queries_are_serialized_for_the_shared_mcp_client() -> None:
     asyncio.run(run_queries())
 
     assert generator.max_active_generations == 1
+
+
+def test_cancelled_threaded_generation_holds_query_lock_until_worker_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generator = StrandsSQLGenerator(cast(MCPClient, object()))
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    calls = 0
+
+    def invoke_agent(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        worker_started.set()
+        release_worker.wait(timeout=1)
+        return "SELECT 1"
+
+    monkeypatch.setattr(generator, "_invoke_agent", invoke_agent)
+    service = Text2SQLService(generator, StubExecutor([successful_execution()]))
+
+    async def run_queries() -> None:
+        first = asyncio.create_task(service.query("first question"))
+        assert await asyncio.to_thread(worker_started.wait, 1)
+        first.cancel()
+        second = asyncio.create_task(service.query("second question"))
+        await asyncio.sleep(0)
+
+        assert calls == 1
+        assert not second.done()
+
+        release_worker.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await second
+
+    asyncio.run(run_queries())
 
 
 @pytest.mark.parametrize("sql_length", [MAX_SQL_LENGTH - 1, MAX_SQL_LENGTH])

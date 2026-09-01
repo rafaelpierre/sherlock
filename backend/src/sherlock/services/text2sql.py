@@ -15,7 +15,6 @@ from strands.tools.mcp import MCPClient
 from sherlock.agent import SQLGeneration, create_sql_generation_agent
 from sherlock.config import Settings
 from sherlock.contracts import MAX_SQL_LENGTH
-from sherlock.execution import run_blocking_provider_call
 
 GENERATOR_TOOLS = ("get_schema", "get_sample_values", "get_database_info")
 REPAIRABLE_ERRORS = frozenset(
@@ -89,6 +88,28 @@ class QueryExecutor(Protocol):
     async def execute(self, sql: str) -> ExecutionResult: ...
 
 
+async def _complete_threaded_work[Result](operation: Callable[[], Result]) -> Result:
+    """Finish a worker thread before forwarding cancellation to the caller.
+
+    ``asyncio.to_thread`` cannot cancel a running worker. Callers of the shared
+    MCP client therefore must keep their service lock until that worker has
+    finished using and cleaning up its agent.
+    """
+
+    worker = asyncio.create_task(asyncio.to_thread(operation))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        if not worker.cancelled():
+            worker.exception()
+        raise
+
+
 class StrandsSQLGenerator:
     """Generate SQL with isolated Strands agents and cache initial translations."""
 
@@ -99,7 +120,7 @@ class StrandsSQLGenerator:
 
     async def generate(self, question: str) -> tuple[str, bool]:
         before = self._generate_cached.cache_info()
-        sql = await run_blocking_provider_call(self._generate_cached, question)
+        sql = await _complete_threaded_work(lambda: self._generate_cached(question))
         after = self._generate_cached.cache_info()
         return sql, after.hits > before.hits
 
@@ -115,7 +136,7 @@ class StrandsSQLGenerator:
             f"Execution error:\n{json.dumps(error, sort_keys=True)}\n\n"
             "Produce a corrected query. Inspect the schema again if necessary."
         )
-        return await run_blocking_provider_call(self._invoke_agent, prompt)
+        return await _complete_threaded_work(lambda: self._invoke_agent(prompt))
 
     def _generate_uncached(self, question: str) -> str:
         return _require_bounded_sql(self._invoke_agent(question))
