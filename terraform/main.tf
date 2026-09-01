@@ -43,7 +43,13 @@ resource "aws_secretsmanager_secret" "phoenix_otel" {
 
 data "aws_caller_identity" "current" {}
 
+locals {
+  cognito_enabled = length(var.cognito_callback_urls) > 0
+}
+
 resource "aws_cognito_user_pool" "sherlock" {
+  count = local.cognito_enabled ? 1 : 0
+
   name = "${var.project_name}-users"
 
   username_attributes      = ["email"]
@@ -59,8 +65,10 @@ resource "aws_cognito_user_pool" "sherlock" {
 }
 
 resource "aws_cognito_user_pool_client" "frontend" {
+  count = local.cognito_enabled ? 1 : 0
+
   name                                 = "${var.project_name}-frontend"
-  user_pool_id                         = aws_cognito_user_pool.sherlock.id
+  user_pool_id                         = aws_cognito_user_pool.sherlock[0].id
   generate_secret                      = false
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
@@ -72,8 +80,10 @@ resource "aws_cognito_user_pool_client" "frontend" {
 }
 
 resource "aws_cognito_user_pool_domain" "sherlock" {
+  count = local.cognito_enabled ? 1 : 0
+
   domain       = "${var.project_name}-${data.aws_caller_identity.current.account_id}"
-  user_pool_id = aws_cognito_user_pool.sherlock.id
+  user_pool_id = aws_cognito_user_pool.sherlock[0].id
 }
 
 module "frontend" {
@@ -90,9 +100,9 @@ module "frontend" {
   minimum_task_count       = 1
   maximum_task_count       = 1
   backend_url              = module.backend.endpoint
-  cognito_issuer           = "https://${aws_cognito_user_pool.sherlock.endpoint}"
-  cognito_client_id        = aws_cognito_user_pool_client.frontend.id
-  cognito_hosted_ui_domain = "https://${aws_cognito_user_pool_domain.sherlock.domain}.auth.${var.aws_region}.amazoncognito.com"
+  cognito_issuer           = local.cognito_enabled ? "https://${aws_cognito_user_pool.sherlock[0].endpoint}" : null
+  cognito_client_id        = local.cognito_enabled ? aws_cognito_user_pool_client.frontend[0].id : null
+  cognito_hosted_ui_domain = local.cognito_enabled ? "https://${aws_cognito_user_pool_domain.sherlock[0].domain}.auth.${var.aws_region}.amazoncognito.com" : null
 }
 
 module "backend" {
@@ -112,8 +122,8 @@ module "backend" {
   agentcore_runtime_arn      = module.agentcore.runtime_arn
   runtime_secret_arns        = [aws_secretsmanager_secret.phoenix_otel.arn]
   phoenix_secret_id          = aws_secretsmanager_secret.phoenix_otel.arn
-  cognito_issuer             = "https://${aws_cognito_user_pool.sherlock.endpoint}"
-  cognito_client_id          = aws_cognito_user_pool_client.frontend.id
+  cognito_issuer             = local.cognito_enabled ? "https://${aws_cognito_user_pool.sherlock[0].endpoint}" : null
+  cognito_client_id          = local.cognito_enabled ? aws_cognito_user_pool_client.frontend[0].id : null
 }
 
 module "agentcore" {

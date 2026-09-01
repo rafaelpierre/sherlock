@@ -119,8 +119,33 @@ jobs:
       - name: Validate Terraform
         run: terraform -chdir=terraform validate
 
-      - name: Apply infrastructure
-        run: terraform -chdir=terraform apply -input=false -auto-approve -var='project_name=sherlock' -var='frontend_image_tag=${{ steps.releases.outputs.frontend_image_tag }}' -var='backend_image_tag=${{ steps.releases.outputs.backend_image_tag }}' -var='mcp_image_tag=${{ steps.releases.outputs.mcp_image_tag }}'
+      - name: Bootstrap ECS infrastructure when no frontend endpoint exists
+        id: bootstrap
+        run: |
+          set -euo pipefail
+          if FRONTEND_URL="$(terraform -chdir=terraform output -raw frontend_url 2>/dev/null)"; then
+            echo "The existing frontend endpoint will be retained: ${FRONTEND_URL}"
+          else
+            terraform -chdir=terraform apply -input=false -auto-approve \
+              -var='project_name=sherlock' \
+              -var='frontend_image_tag=${{ steps.releases.outputs.frontend_image_tag }}' \
+              -var='backend_image_tag=${{ steps.releases.outputs.backend_image_tag }}' \
+              -var='mcp_image_tag=${{ steps.releases.outputs.mcp_image_tag }}'
+            FRONTEND_URL="$(terraform -chdir=terraform output -raw frontend_url)"
+          fi
+          echo "frontend_callback_url=${FRONTEND_URL%/}/" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Cognito and authenticated infrastructure
+        env:
+          FRONTEND_CALLBACK_URL: ${{ steps.bootstrap.outputs.frontend_callback_url }}
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform apply -input=false -auto-approve \
+            -var='project_name=sherlock' \
+            -var='frontend_image_tag=${{ steps.releases.outputs.frontend_image_tag }}' \
+            -var='backend_image_tag=${{ steps.releases.outputs.backend_image_tag }}' \
+            -var='mcp_image_tag=${{ steps.releases.outputs.mcp_image_tag }}' \
+            -var="cognito_callback_urls=[\"${FRONTEND_CALLBACK_URL}\"]"
 
       - name: Smoke test the deployed browser path
         run: |
