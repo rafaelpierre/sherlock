@@ -78,13 +78,18 @@ class StreamBuffer:
         self._closed = asyncio.Event()
         self.terminal_event: str | None = None
 
-    def put(self, event: str) -> None:
+    async def put(self, event: str) -> None:
+        """Append an event after giving a runnable writer one chance to drain."""
+
         event_bytes = len(event.encode("utf-8"))
-        if (
-            self._events.full()
-            or self._buffered_bytes + event_bytes > MAX_STREAM_BUFFERED_BYTES
-        ):
+        if self._buffered_bytes + event_bytes > MAX_STREAM_BUFFERED_BYTES:
             raise StreamBufferFull
+        if self._events.full():
+            # A producer can synchronously emit several chunks before the response
+            # task has run. Yield once before treating a full queue as backpressure.
+            await asyncio.sleep(0)
+            if self._events.full():
+                raise StreamBufferFull
         self._events.put_nowait(event)
         self._buffered_bytes += event_bytes
 
@@ -102,16 +107,19 @@ class StreamBuffer:
                     return None
             event_wait = asyncio.create_task(self._events.get())
             close_wait = asyncio.create_task(self._closed.wait())
-            done, pending = await asyncio.wait(
-                (event_wait, close_wait), return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-            if event_wait in done:
-                event = event_wait.result()
-                self._buffered_bytes -= len(event.encode("utf-8"))
-                return event
+            try:
+                done, _ = await asyncio.wait(
+                    (event_wait, close_wait), return_when=asyncio.FIRST_COMPLETED
+                )
+                if event_wait in done:
+                    event = event_wait.result()
+                    self._buffered_bytes -= len(event.encode("utf-8"))
+                    return event
+            finally:
+                for task in (event_wait, close_wait):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(event_wait, close_wait, return_exceptions=True)
 
     def _take_nowait(self) -> str:
         event = self._events.get_nowait()
@@ -414,7 +422,7 @@ async def _produce_chat_events(
                     async for event in _chat_event_stream(
                         events, outcome, lease.mark_failed
                     ):
-                        buffer.put(event)
+                        await buffer.put(event)
             except StreamBufferFull as exc:
                 lease.mark_failed()
                 outcome.fail(exc)

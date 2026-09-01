@@ -237,13 +237,47 @@ def test_handled_sse_error_has_a_failed_telemetry_outcome(
 
 
 def test_sse_buffer_bounds_events_and_bytes() -> None:
-    buffer = StreamBuffer()
-    for _ in range(MAX_STREAM_BUFFERED_EVENTS):
-        buffer.put("event")
+    async def run() -> None:
+        buffer = StreamBuffer()
+        for _ in range(MAX_STREAM_BUFFERED_EVENTS):
+            await buffer.put("event")
 
-    with pytest.raises(StreamBufferFull):
-        buffer.put("one event too many")
+        with pytest.raises(StreamBufferFull):
+            await buffer.put("one event too many")
 
-    bytes_buffer = StreamBuffer()
-    with pytest.raises(StreamBufferFull):
-        bytes_buffer.put("x" * (MAX_STREAM_BUFFERED_BYTES + 1))
+        bytes_buffer = StreamBuffer()
+        with pytest.raises(StreamBufferFull):
+            await bytes_buffer.put("x" * (MAX_STREAM_BUFFERED_BYTES + 1))
+
+    asyncio.run(run())
+
+
+def test_sse_buffer_allows_a_runnable_writer_to_drain_a_burst() -> None:
+    async def events():
+        for index in range(MAX_STREAM_BUFFERED_EVENTS + 1):
+            yield "text_delta", ChatTextDelta(delta=str(index), segment="content")
+
+    async def run() -> list[str]:
+        controller = WorkflowController(ExecutionLimits())
+        lease = await controller.admit(WorkflowKind.CHAT)
+        return [event async for event in _traced_chat_event_stream(events(), 0, lease)]
+
+    emitted = asyncio.run(run())
+
+    assert len(emitted) == MAX_STREAM_BUFFERED_EVENTS + 1
+    assert all("event: text_delta" in event for event in emitted)
+
+
+def test_cancelled_sse_buffer_read_cleans_up_waiters() -> None:
+    async def run() -> None:
+        buffer = StreamBuffer()
+        reader = asyncio.create_task(buffer.get())
+        await asyncio.sleep(0)
+        reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader
+        await asyncio.sleep(0)
+        current = asyncio.current_task()
+        assert all(task.done() or task is current for task in asyncio.all_tasks())
+
+    asyncio.run(run())
