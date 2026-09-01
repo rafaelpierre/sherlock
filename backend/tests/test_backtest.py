@@ -186,6 +186,45 @@ def test_unrelated_runtime_error_is_not_normalized() -> None:
 
 
 @pytest.mark.parametrize(
+    ("validator", "executor"),
+    [
+        (
+            FailingValidator(httpx.ConnectError("connection refused")),
+            StubExecutor(aggregate_result()),
+        ),
+        (
+            FailingValidator(
+                ExceptionGroup(
+                    "schema call failed", [httpx.ConnectError("connection refused")]
+                )
+            ),
+            StubExecutor(aggregate_result()),
+        ),
+        (
+            StubValidator(),
+            FailingExecutor(OSError("connection reset")),
+        ),
+        (
+            StubValidator(),
+            FailingExecutor(
+                ExceptionGroup(
+                    "replay call failed", [httpx.ConnectError("connection refused")]
+                )
+            ),
+        ),
+    ],
+)
+def test_post_start_transport_errors_are_normalized(
+    validator: StubValidator | FailingValidator,
+    executor: StubExecutor | FailingExecutor,
+) -> None:
+    service = BacktestService(validator, executor)
+
+    with pytest.raises(BacktestError, match="MCP service is unavailable"):
+        asyncio.run(service.backtest("amount_usd > 1"))
+
+
+@pytest.mark.parametrize(
     "startup_error",
     [
         httpx.ConnectError("connection refused"),
