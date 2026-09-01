@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
@@ -47,4 +48,5 @@ def test_configure_tracing_passes_phoenix_bearer_header_directly(
         "endpoint": "https://app.phoenix.arize.com/v1/traces",
         "headers": {"authorization": "Bearer test-key"},
     }
-    assert "OTEL_EXPORTER_OTLP_HEADERS" not in captured
+    assert "OTEL_EXPORTER_OTLP_HEADERS" not in os.environ
+    assert "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" not in os.environ
