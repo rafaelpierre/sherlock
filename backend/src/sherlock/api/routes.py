@@ -66,7 +66,7 @@ from sherlock.services.text2sql import (
 from sherlock.telemetry import CHAT_TURN_SPAN, SpanOutcome, span
 
 router = APIRouter(prefix="/v1")
-MAX_STREAM_BUFFERED_EVENTS = 8
+MAX_STREAM_BUFFERED_EVENTS = 20
 MAX_STREAM_BUFFERED_BYTES = 256_000
 
 
@@ -84,18 +84,12 @@ class StreamBuffer:
         self.terminal_event: str | None = None
 
     async def put(self, event: str) -> None:
-        """Append an event after giving a runnable writer one chance to drain."""
+        """Append an event, applying backpressure while the bounded queue is full."""
 
         event_bytes = len(event.encode("utf-8"))
         if self._buffered_bytes + event_bytes > MAX_STREAM_BUFFERED_BYTES:
             raise StreamBufferFull
-        if self._events.full():
-            # A producer can synchronously emit several chunks before the response
-            # task has run. Yield once before treating a full queue as backpressure.
-            await asyncio.sleep(0)
-            if self._events.full():
-                raise StreamBufferFull
-        self._events.put_nowait(event)
+        await self._events.put(event)
         self._buffered_bytes += event_bytes
 
     def close(self, terminal_event: str | None = None) -> None:

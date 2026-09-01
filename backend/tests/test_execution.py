@@ -243,12 +243,30 @@ def test_sse_buffer_bounds_events_and_bytes() -> None:
         for _ in range(MAX_STREAM_BUFFERED_EVENTS):
             await buffer.put("event")
 
-        with pytest.raises(StreamBufferFull):
-            await buffer.put("one event too many")
+        blocked_writer = asyncio.create_task(buffer.put("one event too many"))
+        await asyncio.sleep(0)
+        assert not blocked_writer.done()
+
+        assert await buffer.get() == "event"
+        await blocked_writer
 
         bytes_buffer = StreamBuffer()
         with pytest.raises(StreamBufferFull):
             await bytes_buffer.put("x" * (MAX_STREAM_BUFFERED_BYTES + 1))
+
+    asyncio.run(run())
+
+
+def test_sse_buffer_waits_for_a_healthy_writer() -> None:
+    async def run() -> None:
+        buffer = StreamBuffer()
+        for _ in range(MAX_STREAM_BUFFERED_EVENTS):
+            await buffer.put("event")
+
+        writer = asyncio.create_task(buffer.get())
+        await asyncio.sleep(0.01)
+        await buffer.put("one more event")
+        assert await writer == "event"
 
     asyncio.run(run())
 
@@ -294,14 +312,15 @@ def test_backpressured_sse_closes_source_before_releasing_its_lease() -> None:
         lease = await controller.admit(WorkflowKind.CHAT)
         stream = _traced_chat_event_stream(events(), 0, lease)
         await anext(stream)
-        while not provider_started.is_set():
-            await asyncio.sleep(0)
 
         with pytest.raises(WorkflowOverloaded):
             await controller.admit(WorkflowKind.CHAT)
 
+        close_stream = asyncio.create_task(cast(AsyncGenerator[str], stream).aclose())
+        while not provider_started.is_set():
+            await asyncio.sleep(0)
         release_provider.set()
-        await cast(AsyncGenerator[str], stream).aclose()
+        await close_stream
         await controller.drain_provider_calls()
 
         next_lease = await controller.admit(WorkflowKind.CHAT)
