@@ -2,21 +2,38 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import Any
+
+import httpx
 
 from sherlock.config import Settings
 from sherlock.services.rule_validation import (
     MCPSchemaProvider,
+    RuleSchemaError,
     RuleValidationResult,
     RuleValidationService,
     RuleValidator,
 )
-from sherlock.services.text2sql import MCPQueryExecutor, QueryExecutor
+from sherlock.services.text2sql import (
+    MCPQueryExecutor,
+    QueryExecutionError,
+    QueryExecutor,
+)
 
 
 class BacktestError(RuntimeError):
     """Historical replay could not be completed."""
+
+
+async def _mcp_operation[Result](operation: Callable[[], Awaitable[Result]]) -> Result:
+    """Translate only transport failures from an MCP operation."""
+
+    try:
+        return await operation()
+    except* (httpx.HTTPError, OSError) as exc:
+        raise BacktestError("The MCP service is unavailable.") from exc
 
 
 class InvalidBacktestRule(BacktestError):
@@ -82,13 +99,21 @@ class BacktestService:
         self._started = True
 
     async def backtest(self, rule: str) -> dict[str, Any]:
-        await self.start()
-        validation = await self._validator.validate(rule)
+        await _mcp_operation(self.start)
+        try:
+            validation = await _mcp_operation(lambda: self._validator.validate(rule))
+        except (QueryExecutionError, RuleSchemaError) as exc:
+            raise BacktestError(str(exc)) from exc
         if not validation.valid or validation.rule is None:
             raise InvalidBacktestRule(validation)
 
         normalized_rule = validation.rule
-        execution = await self._executor.execute(self._query(normalized_rule))
+        try:
+            execution = await _mcp_operation(
+                lambda: self._executor.execute(self._query(normalized_rule))
+            )
+        except QueryExecutionError as exc:
+            raise BacktestError(str(exc)) from exc
         if execution.error is not None:
             message = execution.error.get(
                 "message", "Historical replay could not be executed."
