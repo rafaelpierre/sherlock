@@ -43,13 +43,13 @@ resource "aws_iam_role_policy_attachment" "infrastructure" {
 }
 
 resource "aws_iam_role" "task" {
-  count              = var.agentcore_runtime_arn == null ? 0 : 1
+  count              = var.create_agentcore_task_role ? 1 : 0
   name               = "${var.service_name}-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume_role.json
 }
 
 data "aws_iam_policy_document" "backend_task" {
-  count = var.agentcore_runtime_arn == null ? 0 : 1
+  count = var.create_agentcore_task_role ? 1 : 0
 
   statement {
     effect = "Allow"
@@ -63,7 +63,7 @@ data "aws_iam_policy_document" "backend_task" {
 }
 
 resource "aws_iam_role_policy" "backend_task" {
-  count  = var.agentcore_runtime_arn == null ? 0 : 1
+  count  = var.create_agentcore_task_role ? 1 : 0
   name   = "${var.service_name}-runtime"
   role   = aws_iam_role.task[0].id
   policy = data.aws_iam_policy_document.backend_task[0].json
@@ -72,12 +72,12 @@ resource "aws_iam_role_policy" "backend_task" {
 locals {
   environment = concat(
     var.backend_url == null ? [] : [{ name = "BACKEND_URL", value = var.backend_url }],
-    var.agentcore_runtime_arn == null ? [] : [
+    var.create_agentcore_task_role ? [
       { name = "AWS_REGION", value = var.aws_region },
       { name = "AWS_DEFAULT_REGION", value = var.aws_region },
       { name = "SHERLOCK_MCP_TRANSPORT", value = "agentcore" },
       { name = "SHERLOCK_AGENTCORE_RUNTIME_ARN", value = var.agentcore_runtime_arn },
-    ],
+    ] : [],
   )
 }
 
@@ -85,7 +85,7 @@ resource "aws_ecs_express_gateway_service" "this" {
   service_name            = var.service_name
   execution_role_arn      = aws_iam_role.execution.arn
   infrastructure_role_arn = aws_iam_role.infrastructure.arn
-  task_role_arn           = var.agentcore_runtime_arn == null ? null : aws_iam_role.task[0].arn
+  task_role_arn           = var.create_agentcore_task_role ? aws_iam_role.task[0].arn : null
   cpu                     = var.cpu
   memory                  = var.memory
   health_check_path       = var.health_check_path
