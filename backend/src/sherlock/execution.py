@@ -146,7 +146,11 @@ _active_workflow_lease: ContextVar[WorkflowLease | None] = ContextVar(
 )
 
 
-async def run_blocking_provider_call[T](function: Callable[..., T], *args: Any) -> T:
+async def run_blocking_provider_call[T](
+    function: Callable[..., T],
+    *args: Any,
+    task_started: Callable[[asyncio.Task[T]], None] | None = None,
+) -> T:
     """Run blocking provider work without losing its admission reservation.
 
     Cancelling this coroutine leaves the thread running, so its current workflow
@@ -156,6 +160,8 @@ async def run_blocking_provider_call[T](function: Callable[..., T], *args: Any) 
     task = asyncio.create_task(asyncio.to_thread(function, *args))
     if lease := _active_workflow_lease.get():
         lease.track_blocking_provider_task(task)
+    if task_started is not None:
+        task_started(task)
     return await asyncio.shield(task)
 
 

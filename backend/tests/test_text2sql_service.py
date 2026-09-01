@@ -127,7 +127,7 @@ def test_concurrent_queries_are_serialized_for_the_shared_mcp_client() -> None:
     assert generator.max_active_generations == 1
 
 
-def test_cancelled_threaded_generation_holds_query_lock_until_worker_finishes(
+def test_cancelled_threaded_generation_defers_lock_release_until_worker_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     generator = StrandsSQLGenerator(cast(MCPClient, object()))
@@ -149,6 +149,9 @@ def test_cancelled_threaded_generation_holds_query_lock_until_worker_finishes(
         first = asyncio.create_task(service.query("first question"))
         assert await asyncio.to_thread(worker_started.wait, 1)
         first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
         second = asyncio.create_task(service.query("second question"))
         await asyncio.sleep(0)
 
@@ -156,8 +159,6 @@ def test_cancelled_threaded_generation_holds_query_lock_until_worker_finishes(
         assert not second.done()
 
         release_worker.set()
-        with pytest.raises(asyncio.CancelledError):
-            await first
         await second
 
     asyncio.run(run_queries())
