@@ -31,6 +31,12 @@ access, validation, metrics, and the authoritative rule/state representation.
 Docker Compose v2, AWS credentials/region, and Bedrock model access are
 required for a live analytical turn.
 
+First authenticate your AWS CLI session:
+
+```bash
+aws login
+```
+
 ```bash
 docker compose up --build --wait
 ```
