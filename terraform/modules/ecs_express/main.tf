@@ -60,6 +60,15 @@ data "aws_iam_policy_document" "backend_task" {
     ]
     resources = ["*"]
   }
+
+  dynamic "statement" {
+    for_each = length(var.runtime_secret_arns) == 0 ? [] : [true]
+    content {
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = var.runtime_secret_arns
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "backend_task" {
@@ -78,6 +87,20 @@ locals {
       { name = "SHERLOCK_MCP_TRANSPORT", value = "agentcore" },
       { name = "SHERLOCK_AGENTCORE_RUNTIME_ARN", value = var.agentcore_runtime_arn },
     ] : [],
+    var.phoenix_secret_id == null ? [] : [
+      { name = "SHERLOCK_PHOENIX_SECRET_ID", value = var.phoenix_secret_id },
+      { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "http/protobuf" },
+      { name = "OTEL_BSP_SCHEDULE_DELAY", value = "5000" },
+      { name = "OTEL_BSP_EXPORT_TIMEOUT", value = "10000" },
+      { name = "OTEL_BSP_MAX_QUEUE_SIZE", value = "2048" },
+      { name = "OTEL_BSP_MAX_EXPORT_BATCH_SIZE", value = "512" },
+      { name = "OTEL_EXPORTER_OTLP_TIMEOUT", value = "10000" },
+      { name = "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", value = "10000" },
+      { name = "OTEL_TRACES_SAMPLER", value = "parentbased_traceidratio" },
+      { name = "OTEL_TRACES_SAMPLER_ARG", value = "1.0" },
+      { name = "OTEL_RESOURCE_ATTRIBUTES", value = "deployment.environment=production" },
+      { name = "OTEL_SEMCONV_STABILITY_OPT_IN", value = "gen_ai_unredacted_attributes=" },
+    ],
   )
 }
 

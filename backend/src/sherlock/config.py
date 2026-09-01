@@ -80,6 +80,7 @@ class Settings:
     mcp_http_headers: dict[str, str] | None = None
     mcp_startup_timeout: int = 30
     agentcore_runtime_arn: str | None = None
+    phoenix_secret_id: str | None = None
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -108,6 +109,7 @@ class Settings:
             ),
             mcp_startup_timeout=int(os.getenv("SHERLOCK_MCP_STARTUP_TIMEOUT", "30")),
             agentcore_runtime_arn=os.getenv("SHERLOCK_AGENTCORE_RUNTIME_ARN"),
+            phoenix_secret_id=os.getenv("SHERLOCK_PHOENIX_SECRET_ID"),
         )
 
     def mcp_server_config(

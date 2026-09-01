@@ -15,6 +15,7 @@ from sherlock.services.backtest import create_backtest_service
 from sherlock.services.rule_comparison import RuleComparisonService
 from sherlock.services.rule_generation import create_rule_generation_service
 from sherlock.services.text2sql import create_text2sql_service
+from sherlock.telemetry import configure_tracing, shutdown_tracing
 
 
 @asynccontextmanager
@@ -22,6 +23,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Create application-scoped resources and close them on shutdown."""
 
     settings = Settings.from_environment()
+    configure_tracing(settings)
     text2sql_service = create_text2sql_service(settings)
     rule_generation_service = create_rule_generation_service(settings)
     backtest_service = create_backtest_service(settings)
@@ -43,6 +45,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         backtest_service.close()
         rule_generation_service.close()
         text2sql_service.close()
+        shutdown_tracing()
 
 
 def create_app() -> FastAPI:

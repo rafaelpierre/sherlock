@@ -60,3 +60,14 @@ variable "create_agentcore_task_role" {
   type        = bool
   default     = false
 }
+
+variable "runtime_secret_arns" {
+  type    = list(string)
+  default = []
+}
+
+variable "phoenix_secret_id" {
+  type     = string
+  default  = null
+  nullable = true
+}
