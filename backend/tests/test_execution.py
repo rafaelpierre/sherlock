@@ -253,6 +253,32 @@ def test_sse_buffer_bounds_events_and_bytes() -> None:
     asyncio.run(run())
 
 
+def test_sse_buffer_waits_for_a_healthy_writer_before_failing() -> None:
+    async def run() -> None:
+        buffer = StreamBuffer()
+        for _ in range(MAX_STREAM_BUFFERED_EVENTS):
+            await buffer.put("event")
+
+        writer = asyncio.create_task(buffer.get())
+        await asyncio.sleep(0.01)
+        await buffer.put("one more event")
+        assert await writer == "event"
+
+    asyncio.run(run())
+
+
+def test_sse_buffer_rejects_a_stalled_writer_after_a_bounded_wait() -> None:
+    async def run() -> None:
+        buffer = StreamBuffer()
+        for _ in range(MAX_STREAM_BUFFERED_EVENTS):
+            await buffer.put("event")
+
+        with pytest.raises(StreamBufferFull):
+            await buffer.put("one event too many")
+
+    asyncio.run(run())
+
+
 def test_sse_buffer_allows_a_runnable_writer_to_drain_a_burst() -> None:
     async def events():
         for index in range(MAX_STREAM_BUFFERED_EVENTS + 1):
