@@ -32,7 +32,7 @@ class CognitoTokenVerifier:
         self._keys: dict[str, dict[str, Any]] = {}
         self._unknown_keys: dict[str, float] = {}
         self._keys_expires_at = 0.0
-        self._last_unknown_key_refresh_at = 0.0
+        self._last_unknown_key_refresh_at: float | None = None
         self._refresh_lock = asyncio.Lock()
 
     async def verify_authorization(self, authorization: str | None) -> dict[str, Any]:
@@ -82,6 +82,7 @@ class CognitoTokenVerifier:
                 self._reject()
             if (
                 now >= self._keys_expires_at
+                or self._last_unknown_key_refresh_at is None
                 or now - self._last_unknown_key_refresh_at
                 >= self._unknown_key_ttl_seconds
             ):
