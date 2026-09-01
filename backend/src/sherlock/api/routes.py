@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
-from typing import Annotated
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -338,6 +338,12 @@ def _record_stream_failure(
         mark_failed()
 
 
+async def _close_async_iterator[T](iterator: AsyncIterator[T]) -> None:
+    """Close an async-generator stream before relinquishing its workflow lease."""
+
+    await cast(AsyncGenerator[T], iterator).aclose()
+
+
 async def _chat_event_stream(
     events: AsyncIterator[tuple[str, BaseModel]],
     outcome: SpanOutcome | None = None,
@@ -374,6 +380,8 @@ async def _chat_event_stream(
                 message="Sherlock could not complete the request. Please try again."
             ),
         )
+    finally:
+        await _close_async_iterator(events)
 
 
 async def _traced_chat_event_stream(
@@ -407,6 +415,7 @@ async def _produce_chat_events(
     """Run the deadline-bound workflow independently from ASGI response writes."""
 
     outcome = SpanOutcome()
+    transformed_events = _chat_event_stream(events, outcome, lease.mark_failed)
     try:
         async with (
             span(
@@ -419,10 +428,11 @@ async def _produce_chat_events(
         ):
             try:
                 async with lease:
-                    async for event in _chat_event_stream(
-                        events, outcome, lease.mark_failed
-                    ):
-                        await buffer.put(event)
+                    try:
+                        async for event in transformed_events:
+                            await buffer.put(event)
+                    finally:
+                        await _close_async_iterator(transformed_events)
             except StreamBufferFull as exc:
                 lease.mark_failed()
                 outcome.fail(exc)

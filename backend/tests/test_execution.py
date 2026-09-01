@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import AsyncGenerator
 from typing import cast
 
 import pytest
@@ -266,6 +267,48 @@ def test_sse_buffer_allows_a_runnable_writer_to_drain_a_burst() -> None:
 
     assert len(emitted) == MAX_STREAM_BUFFERED_EVENTS + 1
     assert all("event: text_delta" in event for event in emitted)
+
+
+def test_backpressured_sse_closes_source_before_releasing_its_lease() -> None:
+    async def run() -> None:
+        controller = WorkflowController(
+            ExecutionLimits(model_in_flight_limit=1, mcp_in_flight_limit=1)
+        )
+        provider_started = threading.Event()
+        release_provider = threading.Event()
+
+        def blocking_provider() -> None:
+            provider_started.set()
+            release_provider.wait()
+
+        async def events():
+            try:
+                for index in range(MAX_STREAM_BUFFERED_EVENTS + 2):
+                    yield (
+                        "text_delta",
+                        ChatTextDelta(delta=str(index), segment="content"),
+                    )
+            finally:
+                await run_blocking_provider_call(blocking_provider)
+
+        lease = await controller.admit(WorkflowKind.CHAT)
+        stream = _traced_chat_event_stream(events(), 0, lease)
+        await anext(stream)
+        while not provider_started.is_set():
+            await asyncio.sleep(0)
+
+        with pytest.raises(WorkflowOverloaded):
+            await controller.admit(WorkflowKind.CHAT)
+
+        release_provider.set()
+        await cast(AsyncGenerator[str], stream).aclose()
+        await controller.drain_provider_calls()
+
+        next_lease = await controller.admit(WorkflowKind.CHAT)
+        async with next_lease:
+            pass
+
+    asyncio.run(run())
 
 
 def test_cancelled_sse_buffer_read_cleans_up_waiters() -> None:
