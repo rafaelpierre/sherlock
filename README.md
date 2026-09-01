@@ -218,7 +218,7 @@ This creates the `sherlock-frontend`, `sherlock-backend`, and `sherlock-mcp` ECR
 repositories, the GitHub OIDC role, and the S3 state bucket. Each merge to
 `main` runs **Publish container images**, which pushes matching immutable,
 multi-architecture images to all three repositories under the merge commit SHA.
-Pull requests build-test the images but never write to ECR.
+Pull requests build-test both target architectures but never write to ECR.
 
 To deploy, trigger **Deploy AWS PoC** manually and provide that published commit
 SHA as `image_tag`. The workflow first confirms that the tag exists in every
