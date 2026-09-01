@@ -98,3 +98,4 @@ jobs:
           name: sherlock-backend-image-${{ github.sha }}
           path: image-release.json
           retention-days: 90
+          overwrite: true
