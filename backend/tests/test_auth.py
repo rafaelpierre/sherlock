@@ -126,6 +126,12 @@ async def test_verifier_throttles_refreshes_for_unknown_key_ids(
         refreshes += 1
 
     monkeypatch.setattr(verifier, "_refresh_keys", refresh_keys)
+    # The fixture has a fresh, non-expired JWKS. Make the first unknown key
+    # explicitly eligible for its one defensive refresh instead of depending on
+    # how long process startup took before this test reached monotonic time.
+    verifier._last_unknown_key_refresh_at = (
+        time.monotonic() - verifier._unknown_key_ttl_seconds
+    )
 
     with pytest.raises(HTTPException):
         await verifier._key("unknown-key-one")
