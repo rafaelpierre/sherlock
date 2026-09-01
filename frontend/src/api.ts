@@ -45,6 +45,13 @@ function parseEvent(name: string, data: string): ChatStreamEvent {
   return result.data;
 }
 
+/**
+ * Treat the SSE wire response as untrusted input, not as application state.
+ *
+ * Bounds on incomplete frames, text, and activity pairing complement the
+ * backend's limits. Only a validated terminal `complete` event may return a
+ * response for the UI to commit; progress events are presentation-only.
+ */
 async function readEventStream(
   response: Response,
   handlers: ChatStreamHandlers,
@@ -142,6 +149,13 @@ async function readEventStream(
   }
 }
 
+/**
+ * Send browser-owned context rather than relying on a server session.
+ *
+ * The client slices history even though persistence already bounds it, so a
+ * caller cannot accidentally expand model context by bypassing the store.
+ * JSON remains a compatibility fallback while SSE supplies live progress.
+ */
 export async function sendChat(
   conversationId: string,
   message: string,

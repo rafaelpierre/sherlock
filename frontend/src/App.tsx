@@ -38,6 +38,12 @@ function truncateUtf16(value: string, maximumUnits: number): string {
   return truncated;
 }
 
+/**
+ * Preserve a readable streamed acknowledgement plus final summary as context.
+ *
+ * This deliberately excludes artifacts and raw results: the backend receives
+ * authoritative referents through working state, not reconstructed prose.
+ */
 function assistantHistoryContent(content: string, intro?: string): string {
   const boundedContent = truncateUtf16(content, MAX_HISTORY_CONTENT_LENGTH);
   if (!intro) return boundedContent;
@@ -264,6 +270,11 @@ export default function App() {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [investigation.messages, pending]);
 
+  /**
+   * Use a generation token as well as AbortController because a stale stream
+   * may resolve after reset or a newer request. Only the newest request may
+   * replace browser-owned working state or append transcript content.
+   */
   async function submit(value = input) {
     const message = value.trim();
     if (!message || pending) return;

@@ -1,40 +1,81 @@
-# Sherlock Text2SQL Agent
+# Sherlock backend
 
-A small [Strands Agents](https://strandsagents.com/) application that answers
-natural-language fraud analytics questions through the MCP server in `../mcp`.
-The backend never opens SQLite directly: Strands discovers the MCP tools and the
-MCP server validates and executes the generated read-only SQL.
+The backend is a Python 3.13 FastAPI application that coordinates the FSM
+investigation workflow. It uses Strands Agents and Amazon Bedrock for language
+tasks, but it never opens SQLite directly: all schema inspection and query
+execution cross the MCP boundary. See the [root architecture guide](../README.md)
+for the end-to-end design.
 
-## Run the HTTP API
+## Responsibilities and boundaries
 
-Start the FastAPI application locally:
+- Create a fresh `ChatAgent` for every `/v1/chat` request; keep no hidden
+  conversation or investigation state between requests.
+- Select exactly one workflow per turn: `EXPLORE`, `GENERATE_RULE`,
+  `REFINE_RULE`, `BACKTEST_RULE`, or `COMPARE_RULES`.
+- Hand an exploration once to a fresh bounded `AnalysisAgent`; it can make
+  sequential evidence requests only through `Text2SQLService`.
+- Generate/refine candidate predicates, validate them deterministically, and
+  calculate backtest/comparison metrics deterministically.
+- Translate native agent activity into the safe typed HTTP/SSE contract.
+- Export safe OpenTelemetry trace metadata to Arize Phoenix when configured.
+
+The browser supplies at most 20 history messages and explicit working state.
+The terminal `complete` response replaces that state. Missing state—for example
+“Backtest it” without a rule—is a structured `422`, not an invented rule.
+
+## Run locally
+
+Requirements: Python 3.13+, `uv`, AWS credentials/region, and Bedrock model
+access.
 
 ```bash
-cd backend
-uv sync
-uv run backend-api
+uv sync --locked --dev
+SHERLOCK_AUTH_REQUIRED=false uv run backend-api
 ```
 
-The readiness endpoint is `GET http://localhost:8080/v1/health`. It reports API
-process readiness without invoking Bedrock or running an analytical query.
+Readiness is `GET http://localhost:8080/v1/health`; it does not call Bedrock.
+The default MCP transport is stdio, so the backend starts `../mcp` itself:
+
+```bash
+uv run backend "Which card type has the highest fraud rate?"
+```
+
+For the full supported stack, run `docker compose up --build --wait` from the
+repository root. Compose sets Streamable HTTP MCP at `http://mcp:8000/mcp`.
 
 ## Authentication
 
-When both `SHERLOCK_COGNITO_ISSUER` and `SHERLOCK_COGNITO_CLIENT_ID` are set,
-all `/v1` product endpoints require a Cognito **access** token in an
-`Authorization: Bearer <token>` header. The backend validates the JWT's RS256
-signature against the issuer JWKS, issuer, expiry, `token_use`, and `client_id`
-before creating a workflow or parsing a product request. Missing or invalid
-tokens receive the safe `401` response `{"detail":"Authentication is required."}`
-with `WWW-Authenticate: Bearer`. `/v1/health` remains unauthenticated for
-platform health checks.
+Authentication is enabled by default. When `SHERLOCK_AUTH_REQUIRED=true`, both
+`SHERLOCK_COGNITO_ISSUER` and `SHERLOCK_COGNITO_CLIENT_ID` are required; every
+product endpoint requires a Cognito **access** token in `Authorization: Bearer
+<token>`. The HTTP boundary validates the token's RS256 signature from issuer
+JWKS, issuer, expiry, `token_use`, and `client_id` before request parsing or
+workflow creation. Missing or invalid credentials receive the safe `401`
+response with `WWW-Authenticate: Bearer`. `GET /v1/health` is intentionally
+unauthenticated for platform health checks.
 
-Authentication is enabled by default. The issuer and client ID must be
-configured together whenever `SHERLOCK_AUTH_REQUIRED=true`. Local development
-must explicitly set `SHERLOCK_AUTH_REQUIRED=false`; deployed environments must
-supply both Cognito values and must not disable authentication.
+Compose opts out with `SHERLOCK_AUTH_REQUIRED=false` for local Bedrock/MCP
+development. A deployed environment must configure issuer and client ID together
+and must not disable authentication; do not commit tokens or client secrets.
 
-Submit a standalone analytics question directly to the Text2SQL service:
+## API surface
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/health` | Process readiness only. |
+| `POST /v1/query` | Direct Text2SQL request; returns normalized SQL, a bounded table, repair count, and cache status. |
+| `POST /v1/chat` | Orchestrated FSM turn; returns JSON, or SSE when `Accept: text/event-stream` is requested. |
+| `POST /v1/rules/generate` | Generate then validate a candidate rule. |
+| `POST /v1/rules/refine` | Refine an explicit rule; invalid current rule is `422`. |
+| `POST /v1/rules/backtest` | Validate and replay an explicit candidate rule against historical data. |
+| `POST /v1/rules/compare` | Compare two explicit candidate rules using their historical metrics. |
+
+Chat SSE contains only `text_delta`, `tool_call`, `tool_result`, `complete`,
+and `error`. `complete` is authoritative for artifacts, metadata, and working
+state. Provider events, reasoning, raw tool arguments/results, and unrestricted
+rows never reach the browser.
+
+Example direct query:
 
 ```bash
 curl -X POST http://localhost:8080/v1/query \
@@ -42,277 +83,83 @@ curl -X POST http://localhost:8080/v1/query \
   -d '{"question":"Which card type has the highest fraud rate?"}'
 ```
 
-The response includes the normalized SQL, tabular result, generation attempt
-count, and whether the initial natural-language-to-SQL translation was served
-from the process-local cache. Generated and returned SQL is limited to 20,000
-characters so every successful query can be retained as bounded
-`working_state.last_sql` in a later chat request. Model output above that limit
-is rejected before MCP execution and `/v1/query` returns a controlled `502`.
-For direct rule refinement, an invalid current rule returns its validation
-details as `422`; a schema or query dependency failure returns the retryable
-`502` payload `{"detail": "..."}`.
+## Agent and service design
 
-## Use the conversational API
+`Text2SQLService` creates an isolated SQL-generation agent with access to
+schema/sample inspection. Deterministic service code calls `run_query`; a
+generation agent cannot execute arbitrary database operations. Repairable MCP
+errors are returned to a fresh generator for at most two corrections. Initial
+translations may be served from a bounded process-local LRU cache, but cached
+SQL is still validated and executed through MCP.
 
-`POST /v1/chat` creates a fresh ChatAgent for each request. An `EXPLORE` turn
-hands off once to a fresh AnalysisAgent, which can run adaptive sequential
-questions through the existing Text2SQL service. The browser supplies bounded
-recent history and explicit working state; the backend does not retain hidden
-conversation or investigation state between requests.
+An `AnalysisAgent` can adapt an investigation to its previous completed
+evidence. The implementation enforces no more than five attempted queries,
+seven model turns, 240 seconds wall-clock time, and 140,000 JSON characters of
+grouped evidence. Each successful step is an ordered `analysis_step` artifact:
+the public question, SQL, and bounded table. Partial failure is qualified; an
+all-failed analysis uses a controlled error boundary.
 
-```bash
-curl -X POST http://localhost:8080/v1/chat \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "conversation_id":"3b621bd5-98dd-4be0-b713-89b1ac751fab",
-    "message":"Which card type has the highest fraud rate?",
-    "history":[],
-    "working_state":{}
-  }'
-```
+Rules are predicates over `fraud_transactions`. The validator rejects unsafe
+syntax, unknown fields, subqueries, comments, and `is_fraud`; backtesting
+validates again. Labelled rows alone drive precision, recall, false-positive,
+and fraud-value quality metrics. Alert volume includes all rows and separately
+reports unlabelled flagged transactions.
 
-Each response contains assistant text, typed artifacts, authoritative replacement
-working state, and intent/repair/cache metadata. Supported workflows are data
-exploration, candidate-rule generation and refinement, historical backtesting,
-and current-versus-previous rule comparison. State-dependent requests such as
-`Backtest it` return a structured `422` response when the required rule is absent.
+## MCP transport configuration
 
-Analysis is bounded to five attempted Text2SQL questions, seven Strands model
-turns, and a 240-second wall-clock deadline. Narrow questions may stop after one
-successful query. Broad questions return each successful step in deterministic
-order as one `analysis_step` artifact containing its question, SQL, and bounded
-table. Failed steps consume the query budget; after partial success the agent may
-recover or explicitly qualify the missing evidence, while an all-failed analysis
-uses the controlled ChatAgent error boundary.
-
-The aggregate grouped evidence is capped at 140,000 JSON characters so the
-terminal SSE response remains within the browser's bounded event parser. A query
-that would exceed this cap is treated as unavailable evidence; earlier successful
-steps remain available for a qualified synthesis.
-
-For `EXPLORE`, `repair_count` is the sum of Text2SQL repairs across successful
-steps and `cache_hit` is true only when every successful step used cached initial
-SQL. `working_state.last_sql` is the most recently successful statement. Raw
-result rows remain confined to response artifacts and are not added to working
-state or conversation history.
-
-Clients that send `Accept: text/event-stream` receive named SSE events in this
-order:
-
-- `text_delta` carries an explicit `segment`: buffered pre-tool text is an
-  `introduction`, while `content` appends the result summary. For `EXPLORE`,
-  coordinator text after the handoff is discarded so only the specialist owns
-  the closing synthesis;
-- `tool_call` starts a user-facing activity or specialist handoff;
-- `tool_result` finishes that activity using the same bounded activity ID and
-  an explicit success/failure outcome;
-- later `text_delta` events append the result summary and any closing follow-up
-  or clarification question (the terminal specialist synthesis for `EXPLORE`);
-- `complete` supplies the authoritative `ChatResponse`; or
-- `error` supplies a bounded, user-safe message if the stream cannot complete.
-
-The backend translates native Strands lifecycle events into this stable product
-contract. Provider payloads, reasoning content, raw tool arguments, internal tool
-names, and raw tool results are never sent to the browser. Only `complete` should
-be used to commit artifacts, metadata, or replacement working state.
-
-Client-owned history may include up to 20 messages, with up to 50 user-safe
-activity summaries on each assistant turn. These summaries preserve
-interrupted-turn continuity for a later request, but are formatted as labelled
-conversational context rather than reconstructed native tool calls or
-authoritative data.
-
-```bash
-curl -N -X POST http://localhost:8080/v1/chat \
-  -H 'Accept: text/event-stream' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "conversation_id":"3b621bd5-98dd-4be0-b713-89b1ac751fab",
-    "message":"Which card type has the highest fraud rate?",
-    "history":[],
-    "working_state":{}
-  }'
-```
-
-Clients that do not request SSE continue to receive the JSON response and HTTP
-error contract shown above.
-
-## Execution budgets
-
-Each backend worker applies an end-to-end budget to `/v1/query`, candidate-rule
-generation/refinement, backtesting/comparison, and chat (including SSE). The
-same deadline covers MCP client startup, model calls, validation, and bounded
-repair work. A worker admits work without a local wait queue: model-capable
-work reserves both a model and MCP permit, while deterministic backtesting and
-comparison reserve an MCP permit. Excess work returns `503` with `Retry-After`;
-expired JSON work returns `504`, while an already-open SSE response emits a
-safe `error` event. Client cancellation releases local permits and propagates
-cancellation to downstream async work where the provider supports it.
-
-Defaults can be changed per worker with these validated environment variables:
-
-- `SHERLOCK_WORKFLOW_DEADLINE_SECONDS=240`
-- `SHERLOCK_MODEL_IN_FLIGHT_LIMIT=8`
-- `SHERLOCK_MCP_IN_FLIGHT_LIMIT=16`
-
-The backend records only workflow class, outcome class, and elapsed time for
-these controls; it never logs prompts, SQL, transaction rows, tool arguments,
-or model reasoning.
-
-## Run locally with stdio
-
-The default transport is stdio. The backend starts the sibling MCP project as a
-child process, so a separate server does not need to be running:
-
-```bash
-cd backend
-uv sync
-uv run backend "Which card type has the highest fraud rate?"
-```
-
-Strands uses Amazon Bedrock by default, so configure AWS credentials, region,
-and model access as required by your chosen Strands model provider.
-
-The local command is equivalent to this MCP client configuration:
-
-```json
-{
-  "transport": "stdio",
-  "command": "uv",
-  "args": ["--directory", "../mcp", "run", "fraud-mcp-stdio"]
-}
-```
-
-The actual default MCP path is resolved to an absolute path, so the command is
-independent of the shell's current directory.
-
-## Switch to Streamable HTTP
-
-Start the MCP server separately (or run its Docker image), then change only the
-backend environment:
-
-```bash
-SHERLOCK_MCP_TRANSPORT=streamable-http \
-SHERLOCK_MCP_URL=http://localhost:8000/mcp \
-uv run backend "Show monthly fraud rates for the last year in the database"
-```
-
-In Docker or AWS, set `SHERLOCK_MCP_URL` to the MCP service's private reachable
-URL, for example `http://fraud-mcp:8000/mcp`. Do not use `0.0.0.0` as a client
-address.
-
-## Docker
-
-Build the independently runnable backend image from this directory:
-
-```bash
-docker build -t sherlock-backend .
-docker run --rm -p 8080:8080 \
-  --add-host host.docker.internal=host-gateway \
-  -e SHERLOCK_MCP_TRANSPORT=streamable-http \
-  -e SHERLOCK_MCP_URL=http://host.docker.internal:8000/mcp \
-  -v ~/.aws:/run/sherlock-aws:ro \
-  sherlock-backend
-```
-
-For the supported full-stack workflow, run `docker compose up --build --wait`
-from the repository root. Compose waits for MCP readiness and supplies its
-private URL automatically. At startup, profile files are copied from the
-read-only mount into the container with permissions for the unprivileged app
-user; AWS credentials remain outside the image.
-
-## Backend configuration
-
-| Variable | Default | Purpose |
+| Variable | Default | Meaning |
 |---|---|---|
-| `SHERLOCK_MCP_TRANSPORT` | `stdio` | `stdio` or `streamable-http` |
+| `SHERLOCK_MCP_TRANSPORT` | `stdio` | `stdio`, `streamable-http`, or `agentcore` |
 | `SHERLOCK_MCP_URL` | `http://localhost:8000/mcp` | Streamable HTTP endpoint |
-| `SHERLOCK_MCP_STDIO_COMMAND` | `uv` | Local MCP subprocess command |
-| `SHERLOCK_MCP_STDIO_ARGS` | local sibling MCP command | JSON array of command arguments |
+| `SHERLOCK_MCP_STDIO_COMMAND` | `uv` | Child-process command |
+| `SHERLOCK_MCP_STDIO_ARGS` | sibling MCP command | JSON array of arguments |
 | `SHERLOCK_MCP_HTTP_HEADERS` | unset | JSON object of HTTP headers |
-| `SHERLOCK_MCP_STARTUP_TIMEOUT` | `30` | MCP initialization timeout in seconds |
-| `SHERLOCK_WORKFLOW_DEADLINE_SECONDS` | `240` | End-to-end workflow deadline in seconds |
-| `SHERLOCK_MODEL_IN_FLIGHT_LIMIT` | `8` | Maximum model-capable workflows per worker |
-| `SHERLOCK_MCP_IN_FLIGHT_LIMIT` | `16` | Maximum MCP-backed workflows per worker |
-| `SHERLOCK_PHOENIX_SECRET_ID` | unset | AWS Secrets Manager ARN containing Phoenix OTLP credentials |
+| `SHERLOCK_MCP_STARTUP_TIMEOUT` | `30` | Startup timeout in seconds |
+| `SHERLOCK_AGENTCORE_RUNTIME_ARN` | unset | Required for `agentcore` transport |
+| `SHERLOCK_AUTH_REQUIRED` | `true` | Require Cognito authentication for product routes |
+| `SHERLOCK_COGNITO_ISSUER` | unset | Cognito user-pool issuer; required with authentication |
+| `SHERLOCK_COGNITO_CLIENT_ID` | unset | Cognito app-client ID; required with authentication |
+| `SHERLOCK_WORKFLOW_DEADLINE_SECONDS` | `240` | End-to-end per-worker workflow deadline |
+| `SHERLOCK_MODEL_IN_FLIGHT_LIMIT` | `8` | Model-capable workflow permits per worker |
+| `SHERLOCK_MCP_IN_FLIGHT_LIMIT` | `16` | MCP-backed workflow permits per worker |
 
-## Phoenix OpenTelemetry tracing
+In the delivered AWS deployment, `agentcore` transport constructs the AgentCore
+runtime invocation URL and SigV4-signs it with the ECS task role. Do not put AWS
+keys in application configuration or images.
 
-The backend emits one root `sherlock.chat.turn` span for every `POST /v1/chat`
-turn (including the complete SSE lifetime). Strands agent/model/tool spans and
-Sherlock's workflow spans inherit that trace context. User messages, prompts,
-raw SQL, tool arguments/results, transaction rows, credentials, and provider
-reasoning are never added by Sherlock; Strands sensitive GenAI attributes are
-redacted with `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=`.
+Workers admit model/MCP work without an unbounded local queue. An overloaded
+request returns `503` with `Retry-After`; a deadline returns `504` for JSON or a
+safe `error` SSE event after streaming begins. Cancellation releases permits and
+propagates downstream where the provider supports it. Workflow telemetry records
+only class, outcome, and elapsed time—not prompts, SQL, rows, or reasoning.
 
-Production credentials are kept only in AWS Secrets Manager. After Terraform
-has created `sherlock-phoenix-otel`, add these GitHub Actions secrets and run
-the **Sync Phoenix OpenTelemetry secret** workflow once from `main`:
+## Phoenix tracing
 
-- `PHOENIX_API_KEY`: the Phoenix API key;
-- `PHOENIX_ENDPOINT`: the complete HTTPS OTLP traces endpoint, ending in
-  `/v1/traces`.
+`POST /v1/chat` creates a root `sherlock.chat.turn` span for the complete JSON
+or streamed turn. Child workflow and Strands spans inherit its context. The
+backend deliberately excludes messages, prompts, SQL, transaction rows, raw
+tool data, credentials, and provider reasoning from its attributes.
 
-The workflow stores a JSON secret with those two keys. At startup the backend
-passes the endpoint and bearer credential directly to the standard OTLP/HTTP
-exporter. This avoids the OTLP environment-header parser, which requires
-URL-encoded values and would otherwise discard an ordinary bearer token. The
-task definition supplies bounded
-batch processing (5 second delay, 512-span batches, 2,048-span queue), 10
-second export timeouts, parent-based sampling, and HTTP/protobuf. The Python
-OTLP exporter performs its built-in bounded exponential retry behaviour.
-Missing, malformed, or unreadable credentials disable exporting rather than
-changing any API response or preventing startup.
+Set `SHERLOCK_PHOENIX_SECRET_ID` to an AWS Secrets Manager ARN whose JSON has
+`PHOENIX_API_KEY` and `PHOENIX_ENDPOINT` (an HTTPS URL ending `/v1/traces`). At
+startup the service configures OTLP/HTTP and an `Authorization=Bearer` header.
+The deployed service supplies a 5-second batch delay, 512-span batches, a
+2,048-span queue, 10-second export timeouts, and parent-based sampling. Missing,
+malformed, or unreadable secrets disable exporting without preventing startup.
 
-For example, a custom local checkout can use:
+## Evaluation and checks
 
-```bash
-SHERLOCK_MCP_STDIO_ARGS='["--directory","/work/mcp","run","fraud-mcp-stdio"]' \
-uv run backend "How many transactions are unlabelled?"
-```
-
-Keep credentials in the environment or a secret manager; do not commit bearer
-tokens in header configuration. For a public AWS endpoint, add authentication
-and TLS at the MCP service or reverse-proxy layer.
-
-## Run evaluations
-
-The shared evaluation runner defaults to committed deterministic responses, so
-ordinary development and CI do not call Bedrock or the network:
+The deterministic runner avoids Bedrock and the network by default:
 
 ```bash
 uv run sherlock-eval --suite runner-smoke
-```
-
-It writes a versioned machine-readable report to `../eval-results/report.json`
-and returns a nonzero status for case failures or configuration errors. Live
-model execution requires both `--live` and an explicit `--model`. See
-[`../evals/README.md`](../evals/README.md) for fixture and report schemas,
-reproducibility metadata, credentials, limitations, and exit codes.
-
-## How Text2SQL works
-
-The API route only validates HTTP input and delegates to `Text2SQLService`. The
-service asks an isolated SQL-generation agent to inspect `get_schema`, optionally
-inspect bounded values with `get_sample_values`, and produce one structured
-SQLite `SELECT`/`WITH` statement. The agent cannot call `run_query`.
-
-The service then calls `run_query` deterministically through the same MCP
-connection. Repairable validation or execution errors are returned to a fresh
-SQL-generation agent for at most two corrections. Initial translations use a
-bounded, process-local LRU cache; cached SQL is still validated by MCP every time
-it executes.
-
-The MCP server remains the security boundary: it rejects writes, DDL, unsafe
-SQLite operations, multiple statements, oversized results, and long-running
-queries.
-
-## Checks
-
-```bash
-uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run ty check
 uv run complexipy . --max-complexity-allowed 15 --failed --color no
+uv run pytest --cov=sherlock --cov-report=term-missing --cov-fail-under=80
 ```
+
+Live evaluation requires both `--live` and an explicit `--model`. The current
+smoke result validates runner/report mechanics, not model quality; see
+[`../evals/README.md`](../evals/README.md).

@@ -1,212 +1,254 @@
-# Sherlock
+# Sherlock — Fraud Success Manager Assistant
 
-Sherlock is a decision-support workspace for fraud success managers. It turns
-natural-language questions into analysis, helps an investigator draft candidate
-fraud rules, and replays those hypotheses against historical transactions before
-any production decision is made.
+Sherlock is a delivered interview assignment prototype for a Fraud Success
+Manager (FSM). It turns an investigative question into evidence, a candidate
+SQL predicate, and a historical backtest. It is decision support: it does not
+deploy rules or make live payment decisions.
 
-> [!IMPORTANT]
-> Sherlock does not deploy rules or make live fraud decisions. Generated rules
-> are candidate investigation hypotheses. A human must review their logic,
-> historical trade-offs, operational impact, and suitability for production.
+> A candidate rule is a reviewable hypothesis. An FSM must assess its logic,
+> false-positive cost, coverage, operational fit, and production suitability.
 
-## The problem and product hypothesis
+## The assignment outcome
 
-Fraud investigations often split one feedback loop across SQL tools, notebooks,
-rule editors, and manual metric calculations. The analyst must move repeatedly
-between exploring a pattern, expressing it as a rule, measuring its alert cost
-and fraud coverage, and refining it.
+The brief asks how GenAI can help an FSM explore transaction data, find a
+pattern, and express it as a deployable SQL `WHERE` clause. Sherlock implements
+the full investigative loop:
 
-Sherlock tests a focused hypothesis: a conversational workspace can shorten that
-loop while deterministic services retain control of query execution, rule
-validation, and metric calculation.
+1. Explore the dataset in natural language.
+2. Review schema-grounded SQL and bounded evidence.
+3. Generate or refine a candidate rule.
+4. Backtest it and compare it with the previous candidate.
 
-```text
-Ask -> discover -> form a hypothesis -> draft a candidate rule
-    -> replay it historically -> understand trade-offs -> refine
+Try: “Which card types have the highest fraud rate?”, “Create a candidate rule
+for debit transactions above $1,000”, “Backtest it”, “Raise the threshold to
+$1,500”, and “Compare that with the previous rule.”
+
+The model handles language and synthesis. Deterministic services own database
+access, validation, metrics, and the authoritative rule/state representation.
+
+## Quick start
+
+Docker Compose v2, AWS credentials/region, and Bedrock model access are
+required for a live analytical turn.
+
+```bash
+docker compose up --build --wait
 ```
 
-The current prototype supports:
+Open <http://localhost:3000>. The local browser proxies `/v1` to the backend,
+which calls MCP on the private Compose network. Stop it with `docker compose down`.
 
-- natural-language exploration of the bundled fraud dataset;
-- schema-grounded, read-only Text2SQL with bounded repair attempts;
-- generation and refinement of candidate SQL `WHERE` predicates;
-- historical replay with alert-volume, confusion-matrix, and fraud-value metrics;
-- comparison of the current and previous candidate rule;
-- a React workspace with streamed progress, typed artifacts, and bounded local
-  conversation state; and
-- independently callable query, rule-generation, refinement, backtest, and
-  comparison endpoints.
+For direct development, use two terminals from the repository root. The local
+backend deliberately disables Cognito because the Compose-only development setup
+does not provision an issuer or client ID.
 
-## Demo workflow
-
-Start the full stack, open <http://localhost:3000>, and try this investigation:
-
-1. `Which card types have the highest fraud rate?`
-2. `Create a candidate rule for debit transactions above $1,000.`
-3. `Backtest it.`
-4. `Raise the threshold to $1,500.`
-5. `Compare that with the previous rule.`
-
-Sherlock displays prose separately from authoritative artifacts: the generated
-SQL and table, validated candidate rule, historical replay metrics, and rule
-comparison. **New investigation** clears the browser-owned conversation and
-working state.
-
-## Architecture
-
-```text
-React browser workspace
-  |  POST /v1/chat (bounded history + explicit working state)
-  v
-FastAPI ChatAgent -- EXPLORE --> bounded AnalysisAgent
-                                  | sequential analytical questions
-                                  v
-                              Text2SQL service --> read-only MCP --> SQLite
-  |
-  +-- candidate rules --> generation/refinement --> deterministic validation
-  |
-  +-- replay/compare --> deterministic backtest and comparison --> read-only MCP
-```
-
-- [`frontend/`](frontend/) is a Vite/React/TypeScript client. It keeps at most
-  20 messages, explicit working state, and bounded user-safe activity summaries
-  in `localStorage`; raw query result tables are not persisted.
-- [`backend/`](backend/) is a Python 3.13 FastAPI application built with Strands
-  Agents and Amazon Bedrock. A fresh `ChatAgent` handles each `/v1/chat` request,
-  and a fresh bounded `AnalysisAgent` handles each `EXPLORE` handoff, so the
-  backend retains no hidden conversational or investigation state.
-- [`mcp/`](mcp/) is a FastMCP service and the only database execution boundary.
-  It exposes schema inspection, bounded sample values, database metadata, and
-  read-only query execution over an in-memory snapshot of the bundled SQLite
-  dataset.
-- [`evals/`](evals/) contains versioned evaluation fixtures, the report schema,
-  and reproducibility guidance.
-- [`terraform/`](terraform/) contains optional AWS AgentCore, ECR, and IAM
-  scaffolding; it is not required for local use.
-
-The conversational response contains typed artifacts and authoritative
-replacement working state, so the frontend never has to recover rules or
-metrics by parsing agent prose. Domain services remain callable through their
-own `/v1/query` and `/v1/rules/*` endpoints.
-
-## Safety and reliability boundaries
-
-Sherlock uses the model for language understanding and candidate generation,
-then applies deterministic controls before data access or historical scoring:
-
-- SQL generators can inspect schema and bounded sample values but cannot execute
-  queries. The Text2SQL service executes their output through MCP and permits at
-  most two repair attempts.
-- An analytical handoff can adapt sequential questions to earlier results, but
-  is capped at five attempted queries, seven model turns, and 240 seconds. Every
-  successful step is returned as a grouped question/SQL/table artifact.
-- MCP accepts one SQLite `SELECT` or `WITH` statement, rejects writes, DDL,
-  `PRAGMA`, `ATTACH`, extension loading, and multiple statements, applies row
-  limits and a best-effort timeout, and uses query-only connections.
-- Candidate rules must be a single predicate over the canonical
-  `fraud_transactions` relation. They cannot contain statements, comments,
-  subqueries, unknown columns, or the outcome-only `is_fraud` label.
-- Backtests validate a rule again before execution. Precision, recall,
-  false-positive rate, and fraud-value quality use labelled rows only;
-  `is_fraud IS NULL` is never treated as non-fraud. Alert volume uses all rows
-  and reports unlabelled flagged transactions separately.
-- The browser sends bounded history and structured referents on every request.
-  Missing or invalid state produces a structured error instead of asking the
-  model to invent it.
-- Streamed model/provider events are translated to a small public SSE contract.
-  Raw reasoning, tool arguments, provider payloads, and raw tool results are not
-  exposed to the browser.
-
-These controls reduce risk; they do not establish production readiness or prove
-that generated analysis and rules are correct.
-
-## Evaluation
-
-The committed baseline as of **2026-08-30** is:
-
-| Suite | Mode / model | Dataset context | Result | Repairs |
-|---|---|---|---:|---:|
-| `runner-smoke` | fixture / `deterministic-fixture-v1` | bundled SQLite blob `2831beeb4444e6f32d6226dc0d872a4e9baf3bde` | 1/1 passed (100%) | 0 |
-
-The [machine-readable report](evals/results/runner-smoke-2026-08-30.json)
-records the run date, runner configuration, dataset revision, per-case output,
-latency, and repair metadata. After the one-time dependency installation, the
-evaluation itself runs without AWS credentials or network access:
+Terminal 1:
 
 ```bash
 cd backend
 uv sync --locked --dev
-uv run sherlock-eval \
-  --suite runner-smoke \
-  --output ../eval-results/runner-smoke.json
+SHERLOCK_AUTH_REQUIRED=false uv run backend-api
 ```
 
-This score verifies fixture loading, recursive comparison, aggregation, and
-report generation only. The fixture does not call Bedrock, MCP, or the bundled
-database, even though the report records the repository dataset revision. It is
-not a Text2SQL correctness score or a candidate-rule quality score. No committed
-live-model score currently exists. Semantic golden suites and reviewed live
-Bedrock baselines remain next steps; see the [evaluation guide](evals/README.md)
-for live-run requirements and report semantics.
-
-The bundled snapshot contains 1,159,966 transactions from 2019-01-01 through
-2019-10-31. Of these, 777,339 have labels, 1,360 are labelled fraud, and 382,627
-are unlabelled. Those coverage facts are important when interpreting any future
-quality or backtest metric.
-
-## Setup
-
-### Full stack with Docker Compose
-
-Requirements:
-
-- Docker with Compose v2;
-- AWS credentials and an AWS region; and
-- access to an Amazon Bedrock model supported by Strands.
-
-From the repository root:
+Terminal 2:
 
 ```bash
-docker compose up --build --wait
+cd frontend
+npm ci
+npm run dev
 ```
 
-Compose mounts `~/.aws` read-only by default and uses the standard AWS
-credential chain. To select another profile or credentials directory:
+Package-level operating guides:
 
-```bash
-AWS_PROFILE=sherlock \
-AWS_CONFIG_DIR=/path/to/.aws \
-AWS_REGION=eu-west-2 \
-docker compose up --build --wait
+- [Backend: API, orchestration, telemetry, evaluation](backend/README.md)
+- [Frontend: investigation workspace and SSE contract](frontend/README.md)
+- [MCP: tools, SQLite snapshot, and safety boundary](mcp/README.md)
+- [Evals: fixtures and report semantics](evals/README.md)
+
+### Authentication
+
+The deployed browser uses the Cognito hosted UI with authorization code + PKCE.
+It keeps the access token in memory and sends it as a bearer token for `/v1`
+requests, including SSE chat streams. The backend verifies the token signature,
+issuer, expiry, access-token type, and client ID against Cognito JWKS before it
+creates a workflow. `/v1/health` remains public for platform checks. Compose
+explicitly sets `SHERLOCK_AUTH_REQUIRED=false` for local development; deployed
+environments require Cognito issuer and client-ID configuration and must not
+disable authentication.
+
+## Agentic architecture
+
+Sherlock uses an orchestrator pattern, not a single free-form agent with broad
+database access. A fresh `ChatAgent` is created for every `/v1/chat` request.
+It classifies the request and selects exactly one top-level workflow. That
+choice is a coded boundary: the agent cannot mix exploration, rule mutation,
+backtesting, and comparison in a single turn.
+
+```mermaid
+flowchart TB
+    Request[Chat request: message, <=20 history items, working state] --> O[ChatAgent orchestrator]
+    O --> I{Select exactly one intent}
+    I -->|EXPLORE| H[One handoff to fresh AnalysisAgent]
+    I -->|GENERATE / REFINE| RG[Rule generation service]
+    I -->|BACKTEST| BT[Backtest service]
+    I -->|COMPARE| CP[Rule comparison service]
+    H --> T[Text2SQL service]
+    T --> M[MCP client]
+    RG --> V[Deterministic rule validator]
+    RG --> M
+    BT --> V
+    BT --> M
+    CP --> BT
+    M --> DB[(Read-only SQLite snapshot)]
+    H --> A[Typed analysis_step artifacts]
+    RG --> R[Candidate rule artifact]
+    BT --> B[Backtest artifact]
+    CP --> C[Comparison artifact]
+    A --> Complete[Authoritative complete payload]
+    R --> Complete
+    B --> Complete
+    C --> Complete
 ```
 
-Open <http://localhost:3000>. Check each layer with:
+### Orchestrator, handoff, and tools
 
-```bash
-curl --fail http://localhost:3000/health
-curl --fail http://localhost:3000/v1/health
-curl --fail http://localhost:8080/v1/health
-curl --fail http://localhost:8000/health
+The orchestrator owns intent selection, request-state checks, public stream
+translation, and replacement working state. It hands an `EXPLORE` request once
+to a fresh specialist. The `AnalysisAgent` may ask sequential follow-up
+questions based on completed evidence, but it cannot execute SQL itself: it
+uses `Text2SQLService`, which owns the narrow MCP capability.
+
+```mermaid
+sequenceDiagram
+    participant F as FSM/browser
+    participant O as ChatAgent
+    participant A as AnalysisAgent
+    participant T as Text2SQLService
+    participant M as MCP server
+    F->>O: Broad exploration request
+    O->>O: Choose EXPLORE; validate browser-owned state
+    O->>A: Handoff once, with public question/context
+    loop Coded limits: <=5 queries, <=7 model turns, <=240 seconds
+        A->>T: Ask one evidence question
+        T->>M: get_schema / get_sample_values
+        T->>M: run_query (SELECT/WITH only)
+        M-->>T: Bounded table or structured error
+        T-->>A: Completed evidence step
+    end
+    A-->>O: Ordered question + SQL + table artifacts and synthesis
+    O-->>F: Safe SSE; terminal complete is authoritative
 ```
 
-Health checks prove that the processes are ready; they do not call Bedrock.
-Analytical and chat requests still require valid credentials, a region, and
-model access. Stop the stack with `docker compose down`.
+MCP tools are capability-scoped. A SQL-generation agent may inspect schema and
+bounded samples, while deterministic service code calls `run_query`; the model
+does not receive a general database connection. Rule generation produces a
+predicate, then deterministic validation rejects statements, comments,
+subqueries, unknown columns, and the label-only `is_fraud` field. Backtests
+validate again before querying. This separation makes agent behaviour useful
+without making prose, a tool call, or model memory authoritative.
 
-### AWS PoC deployment
+### MCP as the agentic capability layer
 
-The optional AWS PoC deploys the frontend and backend as separate ECS Express
-Mode services in `eu-west-2`. Express Mode supplies each service's managed HTTPS
-endpoint, TLS termination, logging, health checks, and one-task deployment
-defaults. The browser service proxies `/v1` to the backend service. The MCP
-server runs as an ARM64 MCP-protocol Amazon Bedrock AgentCore Runtime; the
-backend task uses its ECS task identity to invoke it, so no AWS access keys are
-stored in an image or workflow secret. The Terraform module explicitly sets
-ECS Express's `AVERAGE_CPU` scaling metric and target value of `60`, matching
-the service defaults returned by AWS and keeping apply state convergent.
+The MCP server is part of the agentic architecture: it is the constrained tool
+surface through which agents acquire evidence. It exposes `get_schema`,
+`get_sample_values`, `run_query`, and `get_database_info`; it does not expose a
+filesystem, shell, write SQL, or a general database handle. The backend supplies
+an allow-list per use case, and the server independently validates every call.
+That two-sided capability boundary means a compromised prompt or over-eager
+agent cannot turn tool calling into unrestricted data access.
 
-Bootstrap the account once from a workstation with AWS administrator access:
+```mermaid
+flowchart LR
+    Agent[SQL-generation or AnalysisAgent] -->|requested evidence| Service[Text2SQLService]
+    Service -->|allow-listed MCP call| Tools{MCP capability layer}
+    Tools --> Schema[get_schema]
+    Tools --> Samples[get_sample_values<br/>bounded distinct values]
+    Tools --> Query[run_query<br/>validated SELECT/WITH]
+    Schema --> Snapshot[(In-memory SQLite snapshot)]
+    Samples --> Snapshot
+    Query --> Guard[SQL validator + row/time limits<br/>query-only connection]
+    Guard --> Snapshot
+```
+
+### State and streaming contract
+
+The backend is stateless between requests. The browser sends bounded history
+and explicit working state (candidate rule, last SQL, backtest context); it
+commits only the terminal replacement state. Raw tables, provider events,
+partial prose, raw tool arguments/results, and reasoning are not persisted.
+
+SSE exposes only `text_delta`, `tool_call`, `tool_result`, `complete`, and
+`error`. The terminal `complete` artifact payload—not assistant prose—is the
+source of truth for a rule, metrics, or state. This prevents a UI from
+reconstructing sensitive or authoritative information from generated text.
+
+## Data and GenAI safety
+
+| Risk | Implemented control |
+|---|---|
+| Invented schema or invalid SQL | Schema inspection and bounded samples; MCP validates every execution and Text2SQL has at most two repairs. |
+| Writes or expensive queries | Only one `SELECT`/`WITH`; writes, DDL, `PRAGMA`, `ATTACH`, extensions, and multi-statements are rejected. Query-only connections, row limits, and a timeout apply. |
+| Endless agentic investigation | The specialist has coded query, model-turn, deadline, and aggregate-artifact bounds. |
+| Outcome leakage into a rule | `is_fraud` may be used for exploration/metrics but is prohibited in candidate-rule features. |
+| Incorrect null handling | Quality metrics use labelled rows only. `is_fraud IS NULL` is never converted to non-fraud; alert volume reports unlabelled flagged rows. |
+| Leakage through observability/UI | Safe public events only; tracing does not add messages, prompts, SQL, rows, tool payloads, credentials, or reasoning. |
+
+These are guardrails, not a guarantee that a syntactically valid rule is fair,
+causal, or valuable in a live fraud system.
+
+## Telemetry: traces in Arize Phoenix
+
+Every `POST /v1/chat` creates a root `sherlock.chat.turn` OpenTelemetry span,
+which remains open for the full SSE lifetime. Workflow and Strands agent/model/
+tool spans inherit its trace context and are batch-exported over OTLP/HTTP to
+Arize Phoenix. Exporting fails open: unavailable or invalid credentials disable
+tracing without blocking application startup or altering an API response.
+
+```mermaid
+flowchart LR
+    API[FastAPI chat request] --> Root[sherlock.chat.turn]
+    Root --> Workflow[orchestrator / analysis spans]
+    Workflow --> GenAI[Strands agent, model, tool spans]
+    Root --> Exporter[OTLP HTTP batch exporter]
+    Exporter --> Phoenix[Arize Phoenix]
+    Secret[AWS Secrets Manager<br/>endpoint + API key] --> Exporter
+```
+
+The deployed backend receives only the secret identifier. On startup it reads
+the Phoenix endpoint and API key, configures the standard OTLP exporter, and
+uses bounded batch/retry settings. The manual **Sync Phoenix OpenTelemetry
+secret** GitHub workflow updates the secret and forces a backend deployment so
+new tasks load it. See the backend guide for exact configuration.
+
+## Delivered AWS architecture
+
+The cloud deployment is intentionally shown at a high level, separately from
+the agent design. Frontend and backend run as separate ECS Express Mode
+services; the MCP server runs as an Amazon Bedrock AgentCore Runtime.
+
+```mermaid
+flowchart LR
+    User[Browser] --> FE[ECS Express frontend<br/>React + Nginx]
+    FE -->|/v1 proxy| BE[ECS Express backend<br/>FastAPI + Bedrock]
+    BE -->|SigV4 MCP invocation| MCP[Amazon Bedrock AgentCore<br/>MCP Runtime]
+    MCP --> Data[(SQLite snapshot)]
+    BE --> Phoenix[Arize Phoenix]
+    Secrets[AWS Secrets Manager] --> BE
+```
+
+ECS Express is a good fit for the backend because it retains the flexibility of
+a conventional FastAPI service: explicitly versioned HTTP endpoints, request
+and SSE behaviour, middleware, health checks, and future API expansion remain
+under application control. It also supplies managed HTTPS ingress, logging,
+health checks, and simple service scaling. AgentCore is the natural host for
+the MCP protocol service; the backend invokes it with its ECS task identity via
+SigV4, avoiding static AWS keys in code, images, or workflows.
+
+### Deployment operations
+
+Terraform provisions the ECS Express services, AgentCore runtime, IAM roles,
+ECR repositories, and the Phoenix secret container. Bootstrap the account once
+with administrator AWS access:
 
 ```bash
 terraform -chdir=terraform/bootstrap init
@@ -216,142 +258,56 @@ terraform -chdir=terraform/bootstrap apply \
   -var='github_repo=sherlock'
 ```
 
-This creates the `sherlock-frontend`, `sherlock-backend`, and `sherlock-mcp` ECR
-repositories, the GitHub OIDC role, and the S3 state bucket. Each service has
-its own publishing workflow: **Publish frontend image**, **Publish backend
-image**, and **Publish MCP image**. A merge to `main` runs only the workflow
-whose service build context changed. It pushes that service's immutable,
-multi-architecture image under the merge commit SHA. Pull requests build-test
-both target architectures for only the affected service and never write to ECR.
-Each successful publication uploads a 90-day `image-release.json` artifact with
-the service name, source commit, image tag, and manifest digest. The deployment
-workflow uses these artifacts to select immutable releases; their expiry does
-not affect images already deployed to ECS or AgentCore.
+The service-specific GitHub workflows publish immutable multi-architecture
+images on a merge to `main`. **Deploy AWS PoC** selects validated image-release
+artifacts (or explicit service commit-SHA overrides), verifies their manifests,
+and applies Terraform. It does not rebuild, retag, or silently substitute an
+image during deployment. The workflow output `frontend_url` is the application
+URL. Run the **Sync Phoenix OpenTelemetry secret** workflow after setting the
+Phoenix GitHub secrets, so fresh backend tasks load exporter credentials.
 
-To deploy the normal release set, trigger **Deploy AWS PoC** manually and leave
-the three `*_image_tag` override inputs empty. The workflow retrieves the most
-recent unexpired frontend, backend, and MCP release artifacts and deploys the
-image tags recorded in their metadata. This works even though each service is
-published independently on the merge that changes it.
+## Evaluation mindset
 
-For a deliberate mixed-version deployment or rollback, set one or more explicit
-`*_image_tag` overrides. An override must be a lowercase 40-character commit
-SHA from the corresponding service publication; services without an override
-continue to resolve from their latest release artifact. Before Terraform runs,
-the workflow validates release metadata for artifact-resolved images and
-verifies every selected tag exists in its corresponding ECR repository as a
-multi-architecture manifest. Missing or malformed artifacts, missing images, and
-architecture-specific tags fail without substituting another image. The workflow
-logs the selected release and final tag/digest for each service, then applies
-Terraform and calls the public frontend `/health` and proxied `/v1/health`
-endpoints. It never rebuilds, pushes, or retags an image. Its state bucket and
-account are intentionally fixed to this PoC account (`041391475835`) and region
-(`eu-west-2`).
+The committed `runner-smoke` evaluation validates fixture loading, recursive
+comparison, aggregation, and the machine-readable report. It does not call
+Bedrock, MCP, or the database, and is therefore not an accuracy claim.
 
-The initial deployment usually takes several minutes because ECS Express Mode
-creates its managed ingress resources and AgentCore creates a runtime revision.
-Use the workflow's Terraform output `frontend_url` to open the application.
-If a Terraform apply fails after creating resources, correct the configuration
-and rerun **Deploy AWS PoC**. Terraform records the resources it created in the
-remote state, so do not manually remove them or their state entries before the
-retry unless the failure specifically requires AWS cleanup.
+| Committed baseline | Result | What it proves |
+|---|---:|---|
+| `runner-smoke` / deterministic fixture, 2026-08-30 | 1/1 passed; 0 repairs | Evaluation-runner and report mechanics only. |
 
-### Run the application directly
+The historical snapshot contains 1,159,966 transactions (2019-01-01 to
+2019-10-31): 777,339 labelled, 1,360 labelled fraud, and 382,627 unlabelled.
+Those proportions make label-aware cohort semantics essential when interpreting
+backtests. The versioned [machine-readable report](evals/results/runner-smoke-2026-08-30.json)
+records configuration, dataset revision, case output, latency, and repairs.
 
-Requirements are Python 3.13+, [`uv`](https://docs.astral.sh/uv/), Node.js
-22.12+, AWS credentials, an AWS region, and Bedrock model access.
+To earn stakeholder confidence, extend it with semantic Text2SQL goldens scored
+by normalized results (including null/cohort expectations), unsafe-query
+rejection rate, latency, repair rate, and reviewed candidate-rule meaning and
+cohort metrics. Then run a shadow pilot: expert acceptance/edit/rejection rate,
+time to actionable hypothesis, investigation completion, false-positive cost,
+and safety incidents. Monitor model/version drift and the gap between offline
+and pilot outcomes.
 
-Start the backend in one terminal. Its default stdio transport launches the MCP
-server from the sibling project, so no separate MCP process is required:
+## Assumptions, trade-offs, and next work
 
-```bash
-cd backend
-uv sync --locked --dev
-uv run backend-api
-```
-
-Start the frontend in another terminal:
-
-```bash
-cd frontend
-npm ci
-npm run dev
-```
-
-Open <http://localhost:5173>. Vite proxies `/v1` to the backend at
-<http://localhost:8080>.
-
-### Cognito authentication
-
-Production deployments authenticate browser users with the Cognito hosted UI.
-The manual deployment workflow bootstraps an ECS frontend when needed, reads its
-HTTPS endpoint, then uses that endpoint (including a trailing `/`) as the
-exact Cognito callback URL in a second apply. The browser uses authorization code plus
-PKCE, keeps the access token only in memory, and includes it as a bearer token
-on `/v1` requests, including chat SSE streams. The backend verifies Cognito's
-signature, issuer, expiry, access-token type, and client ID using the pool JWKS
-before any product route runs. `/v1/health` is deliberately the only public API
-endpoint.
-
-The checked-in Compose configuration explicitly sets `SHERLOCK_AUTH_REQUIRED=false`
-so it can be used for local Bedrock/MCP development. To exercise authentication
-locally, set it to `true` and set all of
-`SHERLOCK_COGNITO_ISSUER`, `SHERLOCK_COGNITO_CLIENT_ID`, and
-`SHERLOCK_COGNITO_HOSTED_UI_DOMAIN` before starting Compose. The issuer and
-client ID must be set together; never commit tokens or client secrets.
-
-To call the standalone Text2SQL endpoint instead of the browser:
-
-```bash
-curl -X POST http://localhost:8080/v1/query \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"Which card type has the highest fraud rate?"}'
-```
-
-The bundled database is already prepared. Refresh and validate its canonical
-view after changing the source database with:
-
-```bash
-cd mcp
-uv sync --locked --dev
-uv run python db/prepare_database.py
-```
-
-Service-specific configuration and checks are documented in the
-[backend](backend/README.md), [MCP](mcp/README.md), and
-[frontend](frontend/README.md) guides.
-
-## Limitations
-
-- The only committed evaluation is a one-case deterministic runner smoke test;
-  model accuracy, semantic rule quality, unsafe-query rate, and end-to-end
-  reliability are not yet benchmarked.
-- The dataset is a fixed historical SQLite snapshot with substantial unlabelled
-  coverage. Backtests are retrospective associations, not estimates of future
-  production performance or causal impact.
-- Backtests return aggregate metrics, not transaction-level false-positive,
-  true-positive, or false-negative drill-downs.
-- The model can still misunderstand a question or propose a poor but syntactically
-  valid rule. Human review remains mandatory.
-- Browser state is local to one browser profile and is not shared, durable, or a
-  system of record. The backend is stateless between requests.
-- Local MCP HTTP has no authentication or TLS. Bindings are loopback-only in
-  Compose, but standalone deployments must use a trusted private network or an
-  authenticated TLS proxy.
-- The AWS deployment is a one-account PoC. It intentionally has no custom
-  domain, environment promotion, private network topology, or production
-  telemetry/retention policy.
-
-## Next steps
-
-1. Add 20-30 semantic Text2SQL golden cases scored by result correctness.
-2. Add candidate-rule cases that validate meaning and, where practical, matched
-   transaction IDs; publish a reviewed live-model baseline with full context.
-3. Add transaction-level backtest inspection for flagged rows and confusion-
-   matrix cohorts.
-4. Improve request, model, MCP, cache, and backtest observability.
-5. Complete and validate the optional AWS deployment path.
+- The provided source is normalised, so Sherlock prepares a one-row-per-
+  transaction `fraud_transactions` analytics view with derived fields. This
+  makes analysis reliable but means source-schema changes need a view refresh.
+- The brief's rule example contains a subquery. For this assignment, rules are
+  deliberately restricted to flat predicates over the canonical view. The loss
+  of expressiveness buys deterministic validation, portability, and clearer
+  human review; a production rule compiler could support reviewed joins.
+- Labels are incomplete. Excluding unlabelled rows from quality metrics avoids
+  falsely declaring them legitimate, while including them in alert volume keeps
+  operational impact visible.
+- “Deployable” means a candidate predicate and replay here—not automated rule
+  publication. A real integration needs engine compatibility, approvals,
+  staged rollout, monitoring, and rollback.
+- Future work: 20–30 semantic Text2SQL cases and live baselines, transaction
+  level backtest drill-down, authentication/authorisation, private networking,
+  retention policy, fairness/segment analysis, and rule-engine integration.
 
 Delivery status and acceptance criteria live in
-[GitHub Issues](https://github.com/rafaelpierre/sherlock/issues); dated files in
-`specs/` are product-direction references rather than the active backlog.
+[GitHub Issues](https://github.com/rafaelpierre/sherlock/issues).

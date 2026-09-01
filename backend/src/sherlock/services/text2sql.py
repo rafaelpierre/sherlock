@@ -194,7 +194,13 @@ class MCPQueryExecutor:
 
 
 class Text2SQLService:
-    """Coordinate SQL generation and deterministic execution."""
+    """Bridge generative SQL drafting to deterministic MCP execution.
+
+    The generator can use only schema/sample tools; this service alone invokes
+    `run_query`. Every candidate, including a process-local cached initial
+    translation, crosses MCP validation. Repair is deliberately limited so an
+    invalid model output cannot create an unbounded retry loop.
+    """
 
     def __init__(
         self,
