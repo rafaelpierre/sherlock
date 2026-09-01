@@ -6,13 +6,10 @@ mock_provider "aws" {
   }
 }
 
-variables {
-  project_name       = "sherlock"
-  frontend_image_tag = "0000000000000000000000000000000000000000"
-  backend_image_tag  = "0000000000000000000000000000000000000000"
-  mcp_image_tag      = "0000000000000000000000000000000000000000"
-}
-
 run "agentcore_runtime_does_not_make_task_role_count_unknown" {
   command = plan
+
+  module {
+    source = "./tests/fixtures/unknown_agentcore_runtime"
+  }
 }
