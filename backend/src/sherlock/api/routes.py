@@ -57,7 +57,12 @@ from sherlock.services.rule_generation import (
     RuleGenerationError,
     RuleGenerationService,
 )
-from sherlock.services.text2sql import Text2SQLError, Text2SQLService
+from sherlock.services.rule_validation import RuleSchemaError
+from sherlock.services.text2sql import (
+    QueryExecutionError,
+    Text2SQLError,
+    Text2SQLService,
+)
 from sherlock.telemetry import CHAT_TURN_SPAN, SpanOutcome, span
 
 router = APIRouter(prefix="/v1")
@@ -497,7 +502,7 @@ async def refine_rule(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=exc.validation.as_dict(),
         ) from exc
-    except RuleGenerationError as exc:
+    except (RuleGenerationError, RuleSchemaError, QueryExecutionError) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),

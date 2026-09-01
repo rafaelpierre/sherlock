@@ -36,3 +36,14 @@ variable "mcp_image_tag" {
     error_message = "mcp_image_tag must be a lowercase 40-character commit SHA."
   }
 }
+
+variable "cognito_callback_urls" {
+  description = "Exact HTTPS URLs Cognito may redirect to after browser login."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for url in var.cognito_callback_urls : can(regex("^https://", url))])
+    error_message = "cognito_callback_urls must contain only HTTPS URLs."
+  }
+}

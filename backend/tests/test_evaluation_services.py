@@ -39,7 +39,7 @@ def test_live_service_passes_model_and_routes_workflows(monkeypatch) -> None:
 
     class RuleWorkflow:
         async def generate(self, prompt: str) -> dict:
-            return {"rule": prompt}
+            return {"rule": prompt, "valid": True}
 
         def close(self) -> None:
             constructed.append(("closed", "rules"))
@@ -58,15 +58,74 @@ def test_live_service_passes_model_and_routes_workflows(monkeypatch) -> None:
     monkeypatch.setattr(
         "sherlock.evaluation.services.create_rule_generation_service", rule_factory
     )
+
+    class MatchingClient:
+        def __init__(self) -> None:
+            self.started = False
+            self.removed = False
+            self.queries: list[str] = []
+
+        def add_consumer(self, owner) -> None:
+            del owner
+
+        async def load_tools(self) -> None:
+            self.started = True
+
+        async def call_tool_async(self, *, tool_use_id, name, arguments):
+            del tool_use_id, name
+            self.queries.append(arguments["sql"])
+            return {
+                "structuredContent": {
+                    "sql": arguments["sql"],
+                    "columns": [
+                        "candidate_count",
+                        "reference_count",
+                        "candidate_only_count",
+                        "reference_only_count",
+                    ],
+                    "rows": [[123, 123, 0, 0]],
+                    "row_count": 1,
+                    "truncated": False,
+                }
+            }
+
+        def remove_consumer(self, owner) -> None:
+            del owner
+            self.removed = True
+
+    matching_client = MatchingClient()
+    monkeypatch.setattr(Settings, "mcp_client", lambda self, **kwargs: matching_client)
     service = LiveEvaluationService(Settings(), model="bedrock-model-v1")
-    case = EvaluationCase(id="live", prompt="live prompt", expected={"ok": True})
+    case = EvaluationCase(
+        id="live",
+        prompt="live prompt",
+        expected={"ok": True},
+        rule_oracle={
+            "reference_predicate": "amount_usd > 1000",
+            "matching_policy": "exact_transaction_ids",
+            "transaction_id_tolerance": 0,
+        },
+    )
 
     text_result = asyncio.run(service.execute("text2sql", case))
     rule_result = asyncio.run(service.execute("rule_generation", case))
     service.close()
 
     assert text_result == {"question": "live prompt"}
-    assert rule_result == {"rule": "live prompt"}
+    assert rule_result == {
+        "rule": "live prompt",
+        "valid": True,
+        "transaction_id_comparison": {
+            "candidate_count": 123,
+            "reference_count": 123,
+            "candidate_only_count": 0,
+            "reference_only_count": 0,
+        },
+    }
+    assert matching_client.started is True
+    assert len(matching_client.queries) == 1
+    assert matching_client.queries[0].count("EXCEPT") == 2
+    assert matching_client.removed is True
     assert constructed == [
         ("text2sql", "bedrock-model-v1"),
         ("rules", "bedrock-model-v1"),

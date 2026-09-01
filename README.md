@@ -202,7 +202,9 @@ endpoint, TLS termination, logging, health checks, and one-task deployment
 defaults. The browser service proxies `/v1` to the backend service. The MCP
 server runs as an ARM64 MCP-protocol Amazon Bedrock AgentCore Runtime; the
 backend task uses its ECS task identity to invoke it, so no AWS access keys are
-stored in an image or workflow secret.
+stored in an image or workflow secret. The Terraform module explicitly sets
+ECS Express's `AVERAGE_CPU` scaling metric and target value of `60`, matching
+the service defaults returned by AWS and keeping apply state convergent.
 
 Bootstrap the account once from a workstation with AWS administrator access:
 
@@ -279,6 +281,25 @@ npm run dev
 Open <http://localhost:5173>. Vite proxies `/v1` to the backend at
 <http://localhost:8080>.
 
+### Cognito authentication
+
+Production deployments authenticate browser users with the Cognito hosted UI.
+The manual deployment workflow bootstraps an ECS frontend when needed, reads its
+HTTPS endpoint, then uses that endpoint (including a trailing `/`) as the
+exact Cognito callback URL in a second apply. The browser uses authorization code plus
+PKCE, keeps the access token only in memory, and includes it as a bearer token
+on `/v1` requests, including chat SSE streams. The backend verifies Cognito's
+signature, issuer, expiry, access-token type, and client ID using the pool JWKS
+before any product route runs. `/v1/health` is deliberately the only public API
+endpoint.
+
+The checked-in Compose configuration explicitly sets `SHERLOCK_AUTH_REQUIRED=false`
+so it can be used for local Bedrock/MCP development. To exercise authentication
+locally, set it to `true` and set all of
+`SHERLOCK_COGNITO_ISSUER`, `SHERLOCK_COGNITO_CLIENT_ID`, and
+`SHERLOCK_COGNITO_HOSTED_UI_DOMAIN` before starting Compose. The issuer and
+client ID must be set together; never commit tokens or client secrets.
+
 To call the standalone Text2SQL endpoint instead of the browser:
 
 ```bash
@@ -318,8 +339,8 @@ Service-specific configuration and checks are documented in the
   Compose, but standalone deployments must use a trusted private network or an
   authenticated TLS proxy.
 - The AWS deployment is a one-account PoC. It intentionally has no custom
-  domain, environment promotion, private network topology, application
-  authentication, or production telemetry/retention policy.
+  domain, environment promotion, private network topology, or production
+  telemetry/retention policy.
 
 ## Next steps
 

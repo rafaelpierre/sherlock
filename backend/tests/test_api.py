@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
+import pytest
 from fastapi.testclient import TestClient
 
 from sherlock.api.app import create_app
@@ -23,13 +24,15 @@ from sherlock.api.routes import (
 )
 from sherlock.api.schemas import ConversationMessage, WorkingState
 from sherlock.chat import InvalidChatState, MissingChatState
-from sherlock.services.backtest import InvalidBacktestRule
+from sherlock.services.backtest import BacktestError, InvalidBacktestRule
 from sherlock.services.rule_comparison import InvalidComparisonRule
+from sherlock.services.rule_generation import InvalidCurrentRule
 from sherlock.services.rule_validation import (
+    RuleSchemaError,
     RuleValidationError,
     RuleValidationResult,
 )
-from sherlock.services.text2sql import SQLGenerationError
+from sherlock.services.text2sql import QueryExecutionError, SQLGenerationError
 
 
 class StubService:
@@ -74,6 +77,31 @@ class StubRuleService:
             "repair_count": 0,
             "errors": [],
         }
+
+
+class RuleRefinementFailureService:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    async def refine(self, rule: str, instruction: str) -> dict[str, object]:
+        raise self._error
+
+
+class InvalidCurrentRuleService:
+    async def refine(self, rule: str, instruction: str) -> dict[str, object]:
+        raise InvalidCurrentRule(
+            RuleValidationResult(
+                valid=False,
+                rule=None,
+                errors=[
+                    RuleValidationError(
+                        code="UNKNOWN_COLUMN",
+                        message="Column 'missing' does not exist.",
+                        suggestion="Use an available column.",
+                    )
+                ],
+            )
+        )
 
 
 class StubBacktestService:
@@ -123,6 +151,16 @@ class LabelLeakingBacktestService:
                 ],
             )
         )
+
+
+class DependencyFailingBacktestService:
+    async def backtest(self, rule: str) -> dict[str, object]:
+        raise BacktestError("The schema service is unavailable.")
+
+
+class ProgrammingFailingBacktestService:
+    async def backtest(self, rule: str) -> dict[str, object]:
+        raise RuntimeError("programming defect")
 
 
 class StubComparisonService:
@@ -639,6 +677,28 @@ def test_backtest_endpoint_returns_structured_label_leakage_error() -> None:
     assert detail["errors"][0]["code"] == "OUTCOME_COLUMN_FORBIDDEN"
 
 
+def test_backtest_endpoint_returns_502_for_dependency_failure() -> None:
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = DependencyFailingBacktestService
+
+    with TestClient(app) as client:
+        response = client.post("/v1/rules/backtest", json={"rule": "amount_usd > 1"})
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "The schema service is unavailable."}
+
+
+def test_backtest_endpoint_does_not_swallow_programming_errors() -> None:
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = ProgrammingFailingBacktestService
+
+    with (
+        TestClient(app) as client,
+        pytest.raises(RuntimeError, match="programming defect"),
+    ):
+        client.post("/v1/rules/backtest", json={"rule": "amount_usd > 1"})
+
+
 def test_rule_refinement_endpoint_preserves_previous_rule() -> None:
     app = create_app()
     app.dependency_overrides[get_rule_generation_service] = StubRuleService
@@ -657,6 +717,71 @@ def test_rule_refinement_endpoint_preserves_previous_rule() -> None:
         "amount_usd > 1000 AND card_type = 'Debit'"
     )
     assert response.json()["rule"].startswith("amount_usd > 1500")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuleSchemaError("The schema service is unavailable."),
+        QueryExecutionError("The query execution service is unavailable."),
+    ],
+)
+def test_rule_refinement_endpoint_returns_502_for_dependency_failures(
+    error: Exception,
+) -> None:
+    app = create_app()
+    app.dependency_overrides[get_rule_generation_service] = lambda: (
+        RuleRefinementFailureService(error)
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/rules/refine",
+            json={"rule": "amount_usd > 1000", "instruction": "raise it"},
+        )
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": str(error)}
+
+
+def test_rule_refinement_endpoint_returns_structured_invalid_current_rule() -> None:
+    app = create_app()
+    app.dependency_overrides[get_rule_generation_service] = InvalidCurrentRuleService
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/rules/refine",
+            json={"rule": "missing > 1", "instruction": "raise it"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "valid": False,
+        "rule": None,
+        "errors": [
+            {
+                "code": "UNKNOWN_COLUMN",
+                "message": "Column 'missing' does not exist.",
+                "suggestion": "Use an available column.",
+            }
+        ],
+    }
+
+
+def test_rule_refinement_endpoint_does_not_translate_unrelated_errors() -> None:
+    app = create_app()
+    app.dependency_overrides[get_rule_generation_service] = lambda: (
+        RuleRefinementFailureService(ValueError("programming error"))
+    )
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/v1/rules/refine",
+            json={"rule": "amount_usd > 1000", "instruction": "raise it"},
+        )
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
 
 
 def test_rule_refinement_endpoint_rejects_blank_fields() -> None:

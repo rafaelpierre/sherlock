@@ -41,6 +41,16 @@ run "backend_creates_agentcore_task_role" {
     condition     = aws_iam_role_policy_attachment.infrastructure.policy_arn == "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices"
     error_message = "An Express service infrastructure role must use the ECS service-role managed policy."
   }
+
+  assert {
+    condition     = aws_ecs_express_gateway_service.this.scaling_target[0].auto_scaling_metric == "AVERAGE_CPU"
+    error_message = "Express service scaling must explicitly use the AWS CPU default."
+  }
+
+  assert {
+    condition     = aws_ecs_express_gateway_service.this.scaling_target[0].auto_scaling_target_value == 60
+    error_message = "Express service scaling must explicitly use the AWS target default."
+  }
 }
 
 run "frontend_does_not_create_agentcore_task_role" {

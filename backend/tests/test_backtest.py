@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from builtins import ExceptionGroup
 
+import httpx
 import pytest
 
 from sherlock.services.backtest import (
@@ -11,10 +13,11 @@ from sherlock.services.backtest import (
     _ratio,
 )
 from sherlock.services.rule_validation import (
+    RuleSchemaError,
     RuleValidationError,
     RuleValidationResult,
 )
-from sherlock.services.text2sql import ExecutionResult, QueryData
+from sherlock.services.text2sql import ExecutionResult, QueryData, QueryExecutionError
 
 
 class StubValidator:
@@ -39,6 +42,22 @@ class StubExecutor:
     async def execute(self, sql: str) -> ExecutionResult:
         self.sql = sql
         return self.result
+
+
+class FailingValidator:
+    def __init__(self, exception: Exception) -> None:
+        self.exception = exception
+
+    async def validate(self, rule: str) -> RuleValidationResult:
+        raise self.exception
+
+
+class FailingExecutor:
+    def __init__(self, exception: Exception) -> None:
+        self.exception = exception
+
+    async def execute(self, sql: str) -> ExecutionResult:
+        raise self.exception
 
 
 def aggregate_result(values: list[object] | None = None) -> ExecutionResult:
@@ -122,6 +141,125 @@ def test_execution_error_is_exposed_as_backtest_error() -> None:
     )
 
     with pytest.raises(BacktestError, match="Replay timed out"):
+        asyncio.run(service.backtest("amount_usd > 1"))
+
+
+@pytest.mark.parametrize(
+    ("validator", "executor", "message"),
+    [
+        (
+            FailingValidator(RuleSchemaError("The schema service is unavailable.")),
+            StubExecutor(aggregate_result()),
+            "schema service is unavailable",
+        ),
+        (
+            FailingValidator(QueryExecutionError("Validation query unavailable.")),
+            StubExecutor(aggregate_result()),
+            "Validation query unavailable",
+        ),
+        (
+            StubValidator(),
+            FailingExecutor(QueryExecutionError("Replay query unavailable.")),
+            "Replay query unavailable",
+        ),
+    ],
+)
+def test_known_dependency_errors_are_normalized_to_backtest_error(
+    validator: StubValidator | FailingValidator,
+    executor: StubExecutor | FailingExecutor,
+    message: str,
+) -> None:
+    service = BacktestService(validator, executor)
+
+    with pytest.raises(BacktestError, match=message):
+        asyncio.run(service.backtest("amount_usd > 1"))
+
+
+def test_unrelated_runtime_error_is_not_normalized() -> None:
+    service = BacktestService(
+        FailingValidator(RuntimeError("programming defect")),
+        StubExecutor(aggregate_result()),
+    )
+
+    with pytest.raises(RuntimeError, match="programming defect"):
+        asyncio.run(service.backtest("amount_usd > 1"))
+
+
+@pytest.mark.parametrize(
+    ("validator", "executor"),
+    [
+        (
+            FailingValidator(httpx.ConnectError("connection refused")),
+            StubExecutor(aggregate_result()),
+        ),
+        (
+            FailingValidator(
+                ExceptionGroup(
+                    "schema call failed", [httpx.ConnectError("connection refused")]
+                )
+            ),
+            StubExecutor(aggregate_result()),
+        ),
+        (
+            StubValidator(),
+            FailingExecutor(OSError("connection reset")),
+        ),
+        (
+            StubValidator(),
+            FailingExecutor(
+                ExceptionGroup(
+                    "replay call failed", [httpx.ConnectError("connection refused")]
+                )
+            ),
+        ),
+    ],
+)
+def test_post_start_transport_errors_are_normalized(
+    validator: StubValidator | FailingValidator,
+    executor: StubExecutor | FailingExecutor,
+) -> None:
+    service = BacktestService(validator, executor)
+
+    with pytest.raises(BacktestError, match="MCP service is unavailable"):
+        asyncio.run(service.backtest("amount_usd > 1"))
+
+
+@pytest.mark.parametrize(
+    "startup_error",
+    [
+        httpx.ConnectError("connection refused"),
+        ExceptionGroup(
+            "MCP startup failed", [httpx.ConnectError("connection refused")]
+        ),
+    ],
+)
+def test_known_mcp_startup_errors_are_normalized(
+    startup_error: BaseException,
+) -> None:
+    async def start() -> None:
+        raise startup_error
+
+    service = BacktestService(
+        StubValidator(),
+        StubExecutor(aggregate_result()),
+        start_callback=start,
+    )
+
+    with pytest.raises(BacktestError, match="MCP service is unavailable"):
+        asyncio.run(service.backtest("amount_usd > 1"))
+
+
+def test_unrelated_mcp_startup_error_is_not_normalized() -> None:
+    async def start() -> None:
+        raise RuntimeError("programming defect")
+
+    service = BacktestService(
+        StubValidator(),
+        StubExecutor(aggregate_result()),
+        start_callback=start,
+    )
+
+    with pytest.raises(RuntimeError, match="programming defect"):
         asyncio.run(service.backtest("amount_usd > 1"))
 
 

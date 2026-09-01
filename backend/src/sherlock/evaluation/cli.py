@@ -121,14 +121,17 @@ def _metadata(
     now: datetime | None,
 ) -> RunMetadata:
     mode = "live" if args.live else "fixture"
+    settings = Settings.from_environment() if args.live else None
     configuration = {
         "comparison": "recursive-subset-v1",
+        "rule_generation_comparison": "reference-predicate-exact-transaction-ids-v1",
         "fixture_directory": str(args.fixtures.resolve()),
-        "mcp_transport": (
-            Settings.from_environment().mcp_transport if args.live else "disabled"
-        ),
+        "mcp_transport": settings.mcp_transport if settings else "disabled",
         "runner_schema_version": 1,
     }
+    if settings is not None:
+        configuration["mcp_startup_timeout_seconds"] = settings.mcp_startup_timeout
+        configuration["selected_case_count"] = sum(len(suite.cases) for suite in suites)
     return RunMetadata(
         started_at=now or datetime.now(UTC),
         model=args.model or "deterministic-fixture-v1",
@@ -189,6 +192,13 @@ def _print_summary(report: EvaluationReport, output: Path) -> None:
         f"Latency: {summary.total_latency_ms:.3f} ms | "
         f"Repairs: {summary.repair_count} | Repair rate: {summary.repair_rate:.1%}"
     )
+    if summary.semantic_evaluated:
+        print(
+            "Rule metrics: "
+            f"Validation: {summary.validation_passed} | "
+            f"Execution: {summary.execution_passed} | "
+            f"Semantic: {summary.semantic_correct}/{summary.semantic_evaluated}"
+        )
     print(f"Report: {output}")
 
 

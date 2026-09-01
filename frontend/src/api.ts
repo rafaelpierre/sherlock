@@ -1,4 +1,5 @@
 import { chatResponseSchema, chatStreamEventSchema } from "./types";
+import { currentAccessToken, restartLogin } from "./auth";
 import type { ChatResponse, ChatStreamEvent, ConversationMessage, WorkingState } from "./types";
 
 export class ChatApiError extends Error {}
@@ -151,7 +152,11 @@ export async function sendChat(
 ): Promise<ChatResponse> {
   const response = await fetch("/v1/chat", {
     method: "POST",
-    headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
+    headers: {
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
+      ...(currentAccessToken() ? { Authorization: `Bearer ${currentAccessToken()}` } : {}),
+    },
     body: JSON.stringify({
       conversation_id: conversationId,
       message,
@@ -161,6 +166,7 @@ export async function sendChat(
     signal,
   });
   if (!response.ok) {
+    if (response.status === 401) restartLogin();
     throw new ChatApiError(await errorDetail(response));
   }
   if (response.headers.get("Content-Type")?.includes("text/event-stream")) {
