@@ -215,16 +215,26 @@ terraform -chdir=terraform/bootstrap apply \
 ```
 
 This creates the `sherlock-frontend`, `sherlock-backend`, and `sherlock-mcp` ECR
-repositories, the GitHub OIDC role, and the S3 state bucket. Each merge to
-`main` runs **Publish container images**, which pushes matching immutable,
-multi-architecture images to all three repositories under the merge commit SHA.
-Pull requests build-test both target architectures but never write to ECR.
+repositories, the GitHub OIDC role, and the S3 state bucket. Each service has
+its own publishing workflow: **Publish frontend image**, **Publish backend
+image**, and **Publish MCP image**. A merge to `main` runs only the workflow
+whose service build context changed. It pushes that service's immutable,
+multi-architecture image under the merge commit SHA. Pull requests build-test
+both target architectures for only the affected service and never write to ECR.
+Each successful publication uploads a 90-day `image-release.json` artifact with
+the service name, source commit, image tag, and manifest digest. The artifact is
+for traceability only; its expiry does not affect deployment.
 
-To deploy, trigger **Deploy AWS PoC** manually and provide that published commit
-SHA as `image_tag`. The workflow first confirms that the tag exists in every
-repository; it then applies Terraform and calls the public frontend `/health`
-and proxied `/v1/health` endpoints. It never rebuilds, pushes, or retags an
-image. Its state bucket and account are intentionally fixed to this PoC account
+To deploy, trigger **Deploy AWS PoC** manually and provide the three explicit
+tags: `frontend_image_tag`, `backend_image_tag`, and `mcp_image_tag`. Tags may
+come from different releases, allowing a deliberately mixed-version deployment.
+Each must be a lowercase 40-character commit SHA from the corresponding service
+publication. The workflow verifies that every selected tag exists in its ECR
+repository and is a multi-architecture manifest before Terraform runs; missing,
+malformed, or architecture-specific tags fail without substituting another
+image. It then applies Terraform and calls the public frontend `/health` and
+proxied `/v1/health` endpoints. It never rebuilds, pushes, or retags an image.
+Its state bucket and account are intentionally fixed to this PoC account
 (`041391475835`) and region (`eu-west-2`).
 
 The initial deployment usually takes several minutes because ECS Express Mode

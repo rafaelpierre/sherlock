@@ -40,7 +40,7 @@ module "frontend" {
   project_name       = var.project_name
   aws_region         = var.aws_region
   service_name       = "${var.project_name}-frontend"
-  image_uri          = "${data.aws_ecr_repository.frontend.repository_url}:${var.image_tag}"
+  image_uri          = "${data.aws_ecr_repository.frontend.repository_url}:${var.frontend_image_tag}"
   container_port     = 80
   health_check_path  = "/health"
   cpu                = "256"
@@ -56,7 +56,7 @@ module "backend" {
   project_name          = var.project_name
   aws_region            = var.aws_region
   service_name          = "${var.project_name}-backend"
-  image_uri             = "${data.aws_ecr_repository.backend.repository_url}:${var.image_tag}"
+  image_uri             = "${data.aws_ecr_repository.backend.repository_url}:${var.backend_image_tag}"
   container_port        = 8080
   health_check_path     = "/v1/health"
   cpu                   = "512"
@@ -71,5 +71,5 @@ module "agentcore" {
 
   project_name = var.project_name
   aws_region   = var.aws_region
-  image_uri    = "${data.aws_ecr_repository.mcp.repository_url}:${var.image_tag}"
+  image_uri    = "${data.aws_ecr_repository.mcp.repository_url}:${var.mcp_image_tag}"
 }
