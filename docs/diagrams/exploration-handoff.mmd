@@ -1,0 +1,20 @@
+sequenceDiagram
+    accTitle: Bounded exploration handoff
+    accDescr: The browser sends an exploration request to ChatAgent, which validates browser state and hands off once to AnalysisAgent. The specialist asks bounded evidence questions through Text2SQLService and MCP, then returns ordered evidence artifacts for an authoritative terminal SSE complete event.
+    participant F as FSM/browser
+    participant O as ChatAgent
+    participant A as AnalysisAgent
+    participant T as Text2SQLService
+    participant M as MCP server
+    F->>O: Broad exploration request
+    O->>O: Choose EXPLORE and validate browser-owned state
+    O->>A: Handoff once, with public question/context
+    loop Coded limits: <=5 queries, <=7 model turns, <=240 seconds
+        A->>T: Ask one evidence question
+        T->>M: get_schema / get_sample_values
+        T->>M: run_query (SELECT/WITH only)
+        M-->>T: Bounded table or structured error
+        T-->>A: Completed evidence step
+    end
+    A-->>O: Ordered question + SQL + table artifacts and synthesis
+    O-->>F: Safe SSE with an authoritative terminal complete event
