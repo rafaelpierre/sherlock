@@ -183,13 +183,21 @@ def test_rule_runner_records_validation_execution_and_semantic_metrics() -> None
         {
             "correct": {
                 "valid": True,
-                "matched_transaction_ids": ["2", "1"],
-                "reference_transaction_ids": ["1", "2"],
+                "transaction_id_comparison": {
+                    "candidate_count": 2,
+                    "reference_count": 2,
+                    "candidate_only_count": 0,
+                    "reference_only_count": 0,
+                },
             },
             "wrong-ids": {
                 "valid": True,
-                "matched_transaction_ids": ["1"],
-                "reference_transaction_ids": ["2"],
+                "transaction_id_comparison": {
+                    "candidate_count": 1,
+                    "reference_count": 1,
+                    "candidate_only_count": 1,
+                    "reference_only_count": 1,
+                },
             },
             "not-executable": {"valid": False, "errors": [{"code": "UNKNOWN_COLUMN"}]},
         }
