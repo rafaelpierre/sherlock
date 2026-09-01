@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
+import pytest
 from fastapi.testclient import TestClient
 
 from sherlock.api.app import create_app
@@ -23,7 +24,7 @@ from sherlock.api.routes import (
 )
 from sherlock.api.schemas import ConversationMessage, WorkingState
 from sherlock.chat import InvalidChatState, MissingChatState
-from sherlock.services.backtest import InvalidBacktestRule
+from sherlock.services.backtest import BacktestError, InvalidBacktestRule
 from sherlock.services.rule_comparison import InvalidComparisonRule
 from sherlock.services.rule_validation import (
     RuleValidationError,
@@ -123,6 +124,16 @@ class LabelLeakingBacktestService:
                 ],
             )
         )
+
+
+class DependencyFailingBacktestService:
+    async def backtest(self, rule: str) -> dict[str, object]:
+        raise BacktestError("The schema service is unavailable.")
+
+
+class ProgrammingFailingBacktestService:
+    async def backtest(self, rule: str) -> dict[str, object]:
+        raise RuntimeError("programming defect")
 
 
 class StubComparisonService:
@@ -637,6 +648,28 @@ def test_backtest_endpoint_returns_structured_label_leakage_error() -> None:
     assert detail["valid"] is False
     assert detail["rule"] is None
     assert detail["errors"][0]["code"] == "OUTCOME_COLUMN_FORBIDDEN"
+
+
+def test_backtest_endpoint_returns_502_for_dependency_failure() -> None:
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = DependencyFailingBacktestService
+
+    with TestClient(app) as client:
+        response = client.post("/v1/rules/backtest", json={"rule": "amount_usd > 1"})
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "The schema service is unavailable."}
+
+
+def test_backtest_endpoint_does_not_swallow_programming_errors() -> None:
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = ProgrammingFailingBacktestService
+
+    with (
+        TestClient(app) as client,
+        pytest.raises(RuntimeError, match="programming defect"),
+    ):
+        client.post("/v1/rules/backtest", json={"rule": "amount_usd > 1"})
 
 
 def test_rule_refinement_endpoint_preserves_previous_rule() -> None:

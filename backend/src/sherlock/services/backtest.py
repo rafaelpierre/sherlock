@@ -8,11 +8,16 @@ from typing import Any
 from sherlock.config import Settings
 from sherlock.services.rule_validation import (
     MCPSchemaProvider,
+    RuleSchemaError,
     RuleValidationResult,
     RuleValidationService,
     RuleValidator,
 )
-from sherlock.services.text2sql import MCPQueryExecutor, QueryExecutor
+from sherlock.services.text2sql import (
+    MCPQueryExecutor,
+    QueryExecutionError,
+    QueryExecutor,
+)
 
 
 class BacktestError(RuntimeError):
@@ -83,12 +88,18 @@ class BacktestService:
 
     async def backtest(self, rule: str) -> dict[str, Any]:
         await self.start()
-        validation = await self._validator.validate(rule)
+        try:
+            validation = await self._validator.validate(rule)
+        except (QueryExecutionError, RuleSchemaError) as exc:
+            raise BacktestError(str(exc)) from exc
         if not validation.valid or validation.rule is None:
             raise InvalidBacktestRule(validation)
 
         normalized_rule = validation.rule
-        execution = await self._executor.execute(self._query(normalized_rule))
+        try:
+            execution = await self._executor.execute(self._query(normalized_rule))
+        except QueryExecutionError as exc:
+            raise BacktestError(str(exc)) from exc
         if execution.error is not None:
             message = execution.error.get(
                 "message", "Historical replay could not be executed."
