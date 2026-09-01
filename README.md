@@ -182,6 +182,13 @@ SSE exposes only `text_delta`, `tool_call`, `tool_result`, `complete`, and
 source of truth for a rule, metrics, or state. This prevents a UI from
 reconstructing sensitive or authoritative information from generated text.
 
+The backend-to-writer delivery queue is bounded to 20 public events and
+256 KiB. Reaching the event limit applies backpressure: the workflow waits for
+the SSE writer to drain the queue instead of raising an error for a normal
+burst. A single event over the byte limit uses the safe SSE error path; client
+disconnects, cancellation, and the workflow deadline close the stream and
+release work.
+
 ## Data and GenAI safety
 
 | Risk | Implemented control |

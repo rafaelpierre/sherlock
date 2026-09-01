@@ -75,6 +75,13 @@ and `error`. `complete` is authoritative for artifacts, metadata, and working
 state. Provider events, reasoning, raw tool arguments/results, and unrestricted
 rows never reach the browser.
 
+Delivery from the workflow producer to the SSE writer is bounded to 20 public
+events and 256 KiB. When the event queue is full, the producer waits for the
+writer to drain it; ordinary bursts are not discarded or converted into a
+`StreamBufferFull` error. A single event over the byte bound follows the safe
+SSE error path. Client disconnects, cancellation, and the workflow deadline
+close the stream and release the associated work.
+
 Example direct query:
 
 ```bash
@@ -130,8 +137,10 @@ keys in application configuration or images.
 Workers admit model/MCP work without an unbounded local queue. An overloaded
 request returns `503` with `Retry-After`; a deadline returns `504` for JSON or a
 safe `error` SSE event after streaming begins. Cancellation releases permits and
-propagates downstream where the provider supports it. Workflow telemetry records
-only class, outcome, and elapsed time—not prompts, SQL, rows, or reasoning.
+propagates downstream where the provider supports it. The bounded SSE delivery
+queue applies backpressure independently of this admission control. Workflow
+telemetry records only class, outcome, and elapsed time—not prompts, SQL, rows,
+or reasoning.
 
 ## Phoenix tracing
 
