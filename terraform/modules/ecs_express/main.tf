@@ -87,6 +87,7 @@ locals {
     var.create_agentcore_task_role ? [
       { name = "AWS_REGION", value = var.aws_region },
       { name = "AWS_DEFAULT_REGION", value = var.aws_region },
+      { name = "SHERLOCK_AUTH_REQUIRED", value = var.cognito_issuer == null ? "false" : "true" },
       { name = "SHERLOCK_MCP_TRANSPORT", value = "agentcore" },
       { name = "SHERLOCK_AGENTCORE_RUNTIME_ARN", value = var.agentcore_runtime_arn },
     ] : [],

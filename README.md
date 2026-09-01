@@ -284,8 +284,9 @@ Open <http://localhost:5173>. Vite proxies `/v1` to the backend at
 ### Cognito authentication
 
 Production deployments authenticate browser users with the Cognito hosted UI.
-Terraform requires `cognito_callback_urls`, containing the exact HTTPS frontend
-URLs that Cognito may redirect to. The browser uses authorization code plus
+The manual deployment workflow bootstraps an ECS frontend when needed, reads its
+HTTPS endpoint, then uses that endpoint (including a trailing `/`) as the
+exact Cognito callback URL in a second apply. The browser uses authorization code plus
 PKCE, keeps the access token only in memory, and includes it as a bearer token
 on `/v1` requests, including chat SSE streams. The backend verifies Cognito's
 signature, issuer, expiry, access-token type, and client ID using the pool JWKS

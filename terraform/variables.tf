@@ -40,9 +40,10 @@ variable "mcp_image_tag" {
 variable "cognito_callback_urls" {
   description = "Exact HTTPS URLs Cognito may redirect to after browser login."
   type        = list(string)
+  default     = []
 
   validation {
-    condition     = length(var.cognito_callback_urls) > 0 && alltrue([for url in var.cognito_callback_urls : can(regex("^https://", url))])
-    error_message = "cognito_callback_urls must contain one or more HTTPS URLs."
+    condition     = alltrue([for url in var.cognito_callback_urls : can(regex("^https://", url))])
+    error_message = "cognito_callback_urls must contain only HTTPS URLs."
   }
 }
