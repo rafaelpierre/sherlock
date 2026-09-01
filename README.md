@@ -84,31 +84,7 @@ It classifies the request and selects exactly one top-level workflow. That
 choice is a coded boundary: the agent cannot mix exploration, rule mutation,
 backtesting, and comparison in a single turn.
 
-```mermaid
-flowchart TB
-    Request[Chat request: message, <=20 history items, working state] --> O[ChatAgent orchestrator]
-    O --> I{Select exactly one intent}
-    I -->|EXPLORE| H[One handoff to fresh AnalysisAgent]
-    I -->|GENERATE / REFINE| RG[Rule generation service]
-    I -->|BACKTEST| BT[Backtest service]
-    I -->|COMPARE| CP[Rule comparison service]
-    H --> T[Text2SQL service]
-    T --> M[MCP client]
-    RG --> V[Deterministic rule validator]
-    RG --> M
-    BT --> V
-    BT --> M
-    CP --> BT
-    M --> DB[(Read-only SQLite snapshot)]
-    H --> A[Typed analysis_step artifacts]
-    RG --> R[Candidate rule artifact]
-    BT --> B[Backtest artifact]
-    CP --> C[Comparison artifact]
-    A --> Complete[Authoritative complete payload]
-    R --> Complete
-    B --> Complete
-    C --> Complete
-```
+![Agentic architecture diagram](docs/diagrams/agentic-architecture.svg)
 
 ### Orchestrator, handoff, and tools
 
@@ -118,26 +94,7 @@ to a fresh specialist. The `AnalysisAgent` may ask sequential follow-up
 questions based on completed evidence, but it cannot execute SQL itself: it
 uses `Text2SQLService`, which owns the narrow MCP capability.
 
-```mermaid
-sequenceDiagram
-    participant F as FSM/browser
-    participant O as ChatAgent
-    participant A as AnalysisAgent
-    participant T as Text2SQLService
-    participant M as MCP server
-    F->>O: Broad exploration request
-    O->>O: Choose EXPLORE; validate browser-owned state
-    O->>A: Handoff once, with public question/context
-    loop Coded limits: <=5 queries, <=7 model turns, <=240 seconds
-        A->>T: Ask one evidence question
-        T->>M: get_schema / get_sample_values
-        T->>M: run_query (SELECT/WITH only)
-        M-->>T: Bounded table or structured error
-        T-->>A: Completed evidence step
-    end
-    A-->>O: Ordered question + SQL + table artifacts and synthesis
-    O-->>F: Safe SSE; terminal complete is authoritative
-```
+![Exploration handoff sequence diagram](docs/diagrams/exploration-handoff.svg)
 
 MCP tools are capability-scoped. A SQL-generation agent may inspect schema and
 bounded samples, while deterministic service code calls `run_query`; the model
@@ -157,18 +114,7 @@ an allow-list per use case, and the server independently validates every call.
 That two-sided capability boundary means a compromised prompt or over-eager
 agent cannot turn tool calling into unrestricted data access.
 
-```mermaid
-flowchart LR
-    Agent[SQL-generation or AnalysisAgent] -->|requested evidence| Service[Text2SQLService]
-    Service -->|allow-listed MCP call| Tools{MCP capability layer}
-    Tools --> Schema[get_schema]
-    Tools --> Samples[get_sample_values<br/>bounded distinct values]
-    Tools --> Query[run_query<br/>validated SELECT/WITH]
-    Schema --> Snapshot[(In-memory SQLite snapshot)]
-    Samples --> Snapshot
-    Query --> Guard[SQL validator + row/time limits<br/>query-only connection]
-    Guard --> Snapshot
-```
+![MCP capability layer diagram](docs/diagrams/mcp-capability-layer.svg)
 
 ### State and streaming contract
 
@@ -204,15 +150,7 @@ tool spans inherit its trace context and are batch-exported over OTLP/HTTP to
 Arize Phoenix. Exporting fails open: unavailable or invalid credentials disable
 tracing without blocking application startup or altering an API response.
 
-```mermaid
-flowchart LR
-    API[FastAPI chat request] --> Root[sherlock.chat.turn]
-    Root --> Workflow[orchestrator / analysis spans]
-    Workflow --> GenAI[Strands agent, model, tool spans]
-    Root --> Exporter[OTLP HTTP batch exporter]
-    Exporter --> Phoenix[Arize Phoenix]
-    Secret[AWS Secrets Manager<br/>endpoint + API key] --> Exporter
-```
+![Phoenix telemetry diagram](docs/diagrams/phoenix-telemetry.svg)
 
 The deployed backend receives only the secret identifier. On startup it reads
 the Phoenix endpoint and API key, configures the standard OTLP exporter, and
@@ -226,15 +164,7 @@ The cloud deployment is intentionally shown at a high level, separately from
 the agent design. Frontend and backend run as separate ECS Express Mode
 services; the MCP server runs as an Amazon Bedrock AgentCore Runtime.
 
-```mermaid
-flowchart LR
-    User[Browser] --> FE[ECS Express frontend<br/>React + Nginx]
-    FE -->|/v1 proxy| BE[ECS Express backend<br/>FastAPI + Bedrock]
-    BE -->|SigV4 MCP invocation| MCP[Amazon Bedrock AgentCore<br/>MCP Runtime]
-    MCP --> Data[(SQLite snapshot)]
-    BE --> Phoenix[Arize Phoenix]
-    Secrets[AWS Secrets Manager] --> BE
-```
+![AWS architecture diagram](docs/diagrams/aws-architecture.svg)
 
 ECS Express is a good fit for the backend because it retains the flexibility of
 a conventional FastAPI service: explicitly versioned HTTP endpoints, request
@@ -308,6 +238,7 @@ and pilot outcomes.
 - Future work: 20–30 semantic Text2SQL cases and live baselines, transaction
   level backtest drill-down, authentication/authorisation, private networking,
   retention policy, fairness/segment analysis, and rule-engine integration.
-
-Delivery status and acceptance criteria live in
-[GitHub Issues](https://github.com/rafaelpierre/sherlock/issues).
+- It would also be straightforward to create an agentic improvement flywheel:
+  use an LLM as a judge and/or connect telemetry to coding assistants through
+  the Arize Phoenix MCP server. That work was intentionally not prioritised for
+  this assignment.

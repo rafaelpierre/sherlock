@@ -1,0 +1,23 @@
+flowchart TB
+    Request[Chat request: message, <=20 history items, working state] --> O[ChatAgent orchestrator]
+    O --> I{Select exactly one intent}
+    I -->|EXPLORE| H[One handoff to fresh AnalysisAgent]
+    I -->|GENERATE / REFINE| RG[Rule generation service]
+    I -->|BACKTEST| BT[Backtest service]
+    I -->|COMPARE| CP[Rule comparison service]
+    H --> T[Text2SQL service]
+    T --> M[MCP client]
+    RG --> V[Deterministic rule validator]
+    RG --> M
+    BT --> V
+    BT --> M
+    CP --> BT
+    M --> DB[(Read-only SQLite snapshot)]
+    H --> A[Typed analysis_step artifacts]
+    RG --> R[Candidate rule artifact]
+    BT --> B[Backtest artifact]
+    CP --> C[Comparison artifact]
+    A --> Complete[Authoritative complete payload]
+    R --> Complete
+    B --> Complete
+    C --> Complete

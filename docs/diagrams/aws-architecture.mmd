@@ -1,0 +1,7 @@
+flowchart LR
+    User[Browser] --> FE[ECS Express frontend<br/>React + Nginx]
+    FE -->|/v1 proxy| BE[ECS Express backend<br/>FastAPI + Bedrock]
+    BE -->|SigV4 MCP invocation| MCP[Amazon Bedrock AgentCore<br/>MCP Runtime]
+    MCP --> Data[(SQLite snapshot)]
+    BE --> Phoenix[Arize Phoenix]
+    Secrets[AWS Secrets Manager] --> BE

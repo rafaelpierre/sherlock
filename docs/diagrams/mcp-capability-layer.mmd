@@ -1,0 +1,10 @@
+flowchart LR
+    Agent[SQL-generation or AnalysisAgent] -->|requested evidence| Service[Text2SQLService]
+    Service -->|allow-listed MCP call| Tools{MCP capability layer}
+    Tools --> Schema[get_schema]
+    Tools --> Samples[get_sample_values<br/>bounded distinct values]
+    Tools --> Query[run_query<br/>validated SELECT/WITH]
+    Schema --> Snapshot[(In-memory SQLite snapshot)]
+    Samples --> Snapshot
+    Query --> Guard[SQL validator + row/time limits<br/>query-only connection]
+    Guard --> Snapshot
