@@ -138,6 +138,21 @@ def test_documented_report_schema_matches_the_runtime_contract() -> None:
     assert documented == generated
 
 
+def test_committed_v1_report_remains_readable_with_default_semantic_metrics() -> None:
+    report_path = (
+        Path(__file__).parents[2] / "evals" / "results" / "runner-smoke-2026-08-30.json"
+    )
+
+    report = EvaluationReport.model_validate_json(
+        report_path.read_text(encoding="utf-8")
+    )
+
+    assert report.schema_version == 1
+    assert report.summary.validation_passed == 0
+    assert report.summary.execution_passed == 0
+    assert report.summary.semantic_correct == 0
+
+
 def test_committed_rule_generation_golden_suite_runs_offline(tmp_path) -> None:
     output = tmp_path / "rule-generation.json"
     fixtures = Path(__file__).parents[2] / "evals" / "cases"

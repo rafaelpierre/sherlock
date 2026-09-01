@@ -69,9 +69,8 @@ class LiveEvaluationService:
             await self._matching_client.load_tools()
             self._matching_started = True
         try:
-            output["matched_transaction_ids"] = await self._matched_ids(output["rule"])
-            output["reference_transaction_ids"] = await self._matched_ids(
-                case.rule_oracle.reference_predicate
+            output["transaction_id_comparison"] = await self._compare_transaction_ids(
+                output["rule"], case.rule_oracle.reference_predicate
             )
         except RuntimeError as exc:
             output["execution_error"] = str(exc)
@@ -82,13 +81,49 @@ class LiveEvaluationService:
         self._rules.close()
         self._matching_client.remove_consumer(self._matching_owner)
 
-    async def _matched_ids(self, predicate: str) -> list[str]:
+    async def _compare_transaction_ids(
+        self, candidate_predicate: str, reference_predicate: str
+    ) -> dict[str, int]:
         execution = await self._matching_executor.execute(
-            "SELECT transaction_id "
-            f"FROM {CANONICAL_RELATION} WHERE {predicate} ORDER BY transaction_id"
+            "SELECT "
+            f"(SELECT COUNT(*) FROM {CANONICAL_RELATION} WHERE ({candidate_predicate})) "
+            "AS candidate_count, "
+            f"(SELECT COUNT(*) FROM {CANONICAL_RELATION} WHERE ({reference_predicate})) "
+            "AS reference_count, "
+            "(SELECT COUNT(*) FROM ("
+            f"SELECT transaction_id FROM {CANONICAL_RELATION} WHERE ({candidate_predicate}) "
+            "EXCEPT "
+            f"SELECT transaction_id FROM {CANONICAL_RELATION} WHERE ({reference_predicate})"
+            ")) AS candidate_only_count, "
+            "(SELECT COUNT(*) FROM ("
+            f"SELECT transaction_id FROM {CANONICAL_RELATION} WHERE ({reference_predicate}) "
+            "EXCEPT "
+            f"SELECT transaction_id FROM {CANONICAL_RELATION} WHERE ({candidate_predicate})"
+            ")) AS reference_only_count"
         )
         if execution.error is not None:
             raise RuntimeError(str(execution.error.get("message", "Query failed.")))
-        if execution.data is None or execution.data.truncated:
-            raise RuntimeError("Transaction-ID comparison result was truncated.")
-        return [str(row[0]) for row in execution.data.rows]
+        if (
+            execution.data is None
+            or execution.data.truncated
+            or len(execution.data.rows) != 1
+        ):
+            raise RuntimeError("Transaction-ID comparison returned invalid data.")
+        row = execution.data.rows[0]
+        if len(row) != 4 or any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in row
+        ):
+            raise RuntimeError("Transaction-ID comparison returned invalid counts.")
+        return dict(
+            zip(
+                (
+                    "candidate_count",
+                    "reference_count",
+                    "candidate_only_count",
+                    "reference_only_count",
+                ),
+                row,
+                strict=True,
+            )
+        )

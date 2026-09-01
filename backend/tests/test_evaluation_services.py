@@ -77,8 +77,13 @@ def test_live_service_passes_model_and_routes_workflows(monkeypatch) -> None:
             return {
                 "structuredContent": {
                     "sql": arguments["sql"],
-                    "columns": ["transaction_id"],
-                    "rows": [[123]],
+                    "columns": [
+                        "candidate_count",
+                        "reference_count",
+                        "candidate_only_count",
+                        "reference_only_count",
+                    ],
+                    "rows": [[123, 123, 0, 0]],
                     "row_count": 1,
                     "truncated": False,
                 }
@@ -110,11 +115,16 @@ def test_live_service_passes_model_and_routes_workflows(monkeypatch) -> None:
     assert rule_result == {
         "rule": "live prompt",
         "valid": True,
-        "matched_transaction_ids": ["123"],
-        "reference_transaction_ids": ["123"],
+        "transaction_id_comparison": {
+            "candidate_count": 123,
+            "reference_count": 123,
+            "candidate_only_count": 0,
+            "reference_only_count": 0,
+        },
     }
     assert matching_client.started is True
-    assert len(matching_client.queries) == 2
+    assert len(matching_client.queries) == 1
+    assert matching_client.queries[0].count("EXCEPT") == 2
     assert matching_client.removed is True
     assert constructed == [
         ("text2sql", "bedrock-model-v1"),

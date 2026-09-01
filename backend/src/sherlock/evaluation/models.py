@@ -35,6 +35,7 @@ class RuleGenerationOracle(BaseModel):
     reference_predicate: str = Field(min_length=1, max_length=2_000)
     matching_policy: Literal["exact_transaction_ids"]
     transaction_id_tolerance: Literal[0] = 0
+    minimum_reference_matches: int = Field(default=1, ge=1)
 
 
 class EvaluationSuite(BaseModel):
@@ -106,10 +107,10 @@ class EvaluationSummary(BaseModel):
     total_latency_ms: float = Field(ge=0)
     repair_count: int = Field(ge=0)
     repair_rate: float = Field(ge=0, le=1)
-    validation_passed: int = Field(ge=0)
-    execution_passed: int = Field(ge=0)
-    semantic_correct: int = Field(ge=0)
-    semantic_evaluated: int = Field(ge=0)
+    validation_passed: int = Field(default=0, ge=0)
+    execution_passed: int = Field(default=0, ge=0)
+    semantic_correct: int = Field(default=0, ge=0)
+    semantic_evaluated: int = Field(default=0, ge=0)
 
 
 class EvaluationReport(BaseModel):
@@ -117,7 +118,7 @@ class EvaluationReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     metadata: RunMetadata
     results: list[EvaluationCaseResult]
     summary: EvaluationSummary

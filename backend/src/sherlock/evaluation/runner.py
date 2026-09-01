@@ -38,7 +38,7 @@ class EvaluationRunner:
             for case in suite.cases:
                 results.append(await self._run_case(suite, case))
         return EvaluationReport(
-            schema_version=1,
+            schema_version=2,
             metadata=metadata,
             results=results,
             summary=_summarize(results),
@@ -111,15 +111,28 @@ def _evaluate_case(
 
     assert case.rule_oracle is not None
     validation_passed = output.get("valid") is True
-    matched_ids = output.get("matched_transaction_ids")
-    reference_ids = output.get("reference_transaction_ids")
+    comparison = output.get("transaction_id_comparison")
     execution_passed = (
         validation_passed
-        and isinstance(matched_ids, list)
-        and isinstance(reference_ids, list)
+        and isinstance(comparison, dict)
+        and all(
+            isinstance(comparison.get(key), int)
+            and not isinstance(comparison.get(key), bool)
+            and comparison[key] >= 0
+            for key in (
+                "candidate_count",
+                "reference_count",
+                "candidate_only_count",
+                "reference_only_count",
+            )
+        )
     )
     semantic_correct = (
-        _same_transaction_ids(matched_ids, reference_ids) if execution_passed else False
+        comparison["candidate_only_count"] == 0
+        and comparison["reference_only_count"] == 0
+        and comparison["reference_count"] >= case.rule_oracle.minimum_reference_matches
+        if execution_passed
+        else False
     )
     passed = (
         _contains_expected(output, case.expected)
@@ -132,16 +145,6 @@ def _evaluate_case(
         validation_passed,
         execution_passed,
         semantic_correct,
-    )
-
-
-def _same_transaction_ids(actual: list[Any], expected: list[Any]) -> bool:
-    """Compare transaction IDs as a set; duplicate identifiers are not valid rows."""
-
-    actual_ids = [str(value) for value in actual]
-    expected_ids = [str(value) for value in expected]
-    return len(actual_ids) == len(set(actual_ids)) and set(actual_ids) == set(
-        expected_ids
     )
 
 

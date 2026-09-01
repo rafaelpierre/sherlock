@@ -138,10 +138,12 @@ drives deterministic offline runs and is required unless `--live` is used.
 
 Every `rule_generation` case also requires a `rule_oracle` with a canonical
 `reference_predicate`, `matching_policy: "exact_transaction_ids"`, and
-`transaction_id_tolerance: 0`. The live runner executes both the generated and
-reference predicates through MCP, orders their IDs, and compares them as unique
-sets. This makes the zero tolerance explicit while allowing equivalent SQL
-syntax and predicate ordering. Invalid or non-executable generated rules fail
+`transaction_id_tolerance: 0`. The live runner uses one bounded MCP query to
+compare generated and reference transaction-ID sets: their counts and the
+counts unique to either predicate must agree. This is exact set comparison
+without retrieving transaction IDs, so large cohorts remain within MCP's row
+limit. Every oracle requires at least one reference match, preventing an empty
+cohort from passing accidentally. Invalid or non-executable generated rules fail
 validation or execution respectively and cannot be counted as semantically
 correct.
 
@@ -185,6 +187,9 @@ fraction of non-error cases that required at least one repair.
 ## Report and exit behavior
 
 Reports conform to [`schemas/report.schema.json`](schemas/report.schema.json).
+The runner emits report schema version 2 when semantic rule metrics are present;
+the schema and runtime model continue to accept version-1 reports, treating the
+new aggregate metrics as zero when absent.
 Each case is `passed`, `failed` (the response did not match its oracle), or
 `error` (execution raised an exception). A failing case does not stop later
 cases, so partial runs still produce a complete report and summary.

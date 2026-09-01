@@ -89,21 +89,25 @@
           "type": "number"
         },
         "validation_passed": {
+          "default": 0,
           "minimum": 0,
           "title": "Validation Passed",
           "type": "integer"
         },
         "execution_passed": {
+          "default": 0,
           "minimum": 0,
           "title": "Execution Passed",
           "type": "integer"
         },
         "semantic_correct": {
+          "default": 0,
           "minimum": 0,
           "title": "Semantic Correct",
           "type": "integer"
         },
         "semantic_evaluated": {
+          "default": 0,
           "minimum": 0,
           "title": "Semantic Evaluated",
           "type": "integer"
@@ -116,11 +120,7 @@
         "errors",
         "total_latency_ms",
         "repair_count",
-        "repair_rate",
-        "validation_passed",
-        "execution_passed",
-        "semantic_correct",
-        "semantic_evaluated"
+        "repair_rate"
       ],
       "title": "EvaluationSummary",
       "type": "object"
@@ -187,7 +187,7 @@
   "description": "Stable top-level schema for persisted evaluation results.",
   "properties": {
     "schema_version": {
-      "const": 1,
+      "enum": [1, 2],
       "title": "Schema Version",
       "type": "integer"
     },
