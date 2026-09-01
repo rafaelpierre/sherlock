@@ -7,8 +7,15 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
-MCPTransport = Literal["stdio", "streamable-http"]
+import httpx
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
+from botocore.session import Session
+from strands.tools.mcp import MCPClient
+
+MCPTransport = Literal["stdio", "streamable-http", "agentcore"]
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MCP_DIRECTORY = REPOSITORY_ROOT / "mcp"
@@ -18,6 +25,30 @@ DEFAULT_STDIO_ARGS = (
     "run",
     "fraud-mcp-stdio",
 )
+
+
+class AgentCoreSigV4Auth(httpx.Auth):
+    """Sign each AgentCore MCP invocation with the ECS task identity."""
+
+    def __init__(self, region: str) -> None:
+        self._region = region
+
+    def auth_flow(self, request: httpx.Request):
+        credentials = Session().get_credentials()
+        if credentials is None:
+            raise RuntimeError("AWS credentials are required for AgentCore MCP")
+
+        signed_request = AWSRequest(
+            method=request.method,
+            url=str(request.url),
+            data=request.content,
+            headers=dict(request.headers),
+        )
+        SigV4Auth(
+            credentials.get_frozen_credentials(), "bedrock-agentcore", self._region
+        ).add_auth(signed_request)
+        request.headers.update(signed_request.headers.items())
+        yield request
 
 
 def _json_list(value: str, variable: str) -> tuple[str, ...]:
@@ -48,13 +79,14 @@ class Settings:
     mcp_stdio_args: tuple[str, ...] = DEFAULT_STDIO_ARGS
     mcp_http_headers: dict[str, str] | None = None
     mcp_startup_timeout: int = 30
+    agentcore_runtime_arn: str | None = None
 
     @classmethod
     def from_environment(cls) -> Settings:
         transport = os.getenv("SHERLOCK_MCP_TRANSPORT", "stdio").strip().lower()
-        if transport not in {"stdio", "streamable-http"}:
+        if transport not in {"stdio", "streamable-http", "agentcore"}:
             raise ValueError(
-                "SHERLOCK_MCP_TRANSPORT must be 'stdio' or 'streamable-http'"
+                "SHERLOCK_MCP_TRANSPORT must be 'stdio', 'streamable-http', or 'agentcore'"
             )
 
         stdio_args_value = os.getenv("SHERLOCK_MCP_STDIO_ARGS")
@@ -75,6 +107,7 @@ class Settings:
                 else None
             ),
             mcp_startup_timeout=int(os.getenv("SHERLOCK_MCP_STARTUP_TIMEOUT", "30")),
+            agentcore_runtime_arn=os.getenv("SHERLOCK_AGENTCORE_RUNTIME_ARN"),
         )
 
     def mcp_server_config(
@@ -104,7 +137,48 @@ class Settings:
                 "args": list(self.mcp_stdio_args),
             }
 
+        if self.mcp_transport == "agentcore":
+            raise ValueError("AgentCore MCP clients must be created with mcp_client()")
+
         config = {**common, "url": self.mcp_url}
         if self.mcp_http_headers:
             config["headers"] = self.mcp_http_headers
         return config
+
+    def mcp_client(self, *, allowed_tools: tuple[str, ...] | None = None) -> MCPClient:
+        """Create one MCP client for the selected transport."""
+
+        if self.mcp_transport != "agentcore":
+            clients = MCPClient.load_servers(
+                {
+                    "mcpServers": {
+                        "fraud-analytics": self.mcp_server_config(
+                            allowed_tools=allowed_tools
+                        )
+                    }
+                }
+            )
+            if len(clients) != 1:
+                raise RuntimeError(
+                    "Expected exactly one enabled fraud analytics MCP server"
+                )
+            return clients[0]
+
+        if not self.agentcore_runtime_arn:
+            raise ValueError(
+                "SHERLOCK_AGENTCORE_RUNTIME_ARN is required for agentcore transport"
+            )
+
+        encoded_arn = quote(self.agentcore_runtime_arn, safe="")
+        endpoint = (
+            f"https://bedrock-agentcore.{os.getenv('AWS_REGION', 'eu-west-2')}"
+            f".amazonaws.com/runtimes/{encoded_arn}/invocations?qualifier=DEFAULT"
+        )
+        return MCPClient(
+            url=endpoint,
+            auth_provider=AgentCoreSigV4Auth(os.getenv("AWS_REGION", "eu-west-2")),
+            startup_timeout=self.mcp_startup_timeout,
+            tool_filters={"allowed": list(allowed_tools)} if allowed_tools else None,
+            application_name="sherlock-text2sql-agent",
+            application_version="0.1.0",
+        )

@@ -102,13 +102,9 @@ def create_agent(settings: Settings | None = None) -> Agent:
     """Create a Text2SQL agent and connect it to the configured MCP transport."""
 
     settings = settings or Settings.from_environment()
-    clients = MCPClient.load_servers(
-        {"mcpServers": {"fraud-analytics": settings.mcp_server_config()}}
-    )
-    if len(clients) != 1:
-        raise RuntimeError("Expected exactly one enabled fraud analytics MCP server")
+    client = settings.mcp_client()
 
     # MCPClient is a Strands ToolProvider. Agent discovers MCP tools and owns the
     # connection lifecycle; MCPAgentTool adapters are created by the client.
-    tools: list[Any] = list(clients)
+    tools: list[Any] = [client]
     return Agent(system_prompt=SYSTEM_PROMPT, tools=tools)

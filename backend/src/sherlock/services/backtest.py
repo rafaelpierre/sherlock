@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from strands.tools.mcp import MCPClient
-
 from sherlock.config import Settings
 from sherlock.services.rule_validation import (
     MCPSchemaProvider,
@@ -178,18 +176,7 @@ class BacktestService:
 def create_backtest_service(settings: Settings) -> BacktestService:
     """Build the production backtest service and its MCP resource."""
 
-    clients = MCPClient.load_servers(
-        {
-            "mcpServers": {
-                "fraud-rule-backtest": settings.mcp_server_config(
-                    allowed_tools=("get_schema", "run_query")
-                )
-            }
-        }
-    )
-    if len(clients) != 1:
-        raise RuntimeError("Expected one backtest MCP server")
-    client = clients[0]
+    client = settings.mcp_client(allowed_tools=("get_schema", "run_query"))
     owner = object()
     client.add_consumer(owner)
     executor = MCPQueryExecutor(client)

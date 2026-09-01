@@ -23,7 +23,9 @@ that port.
 ## Docker
 
 The production-style image builds the static application with locked npm
-dependencies, serves it with Nginx, and proxies `/v1` to the Compose backend:
+dependencies, serves it with Nginx, and proxies `/v1` to the `BACKEND_URL`
+provided when the container starts. Compose supplies `http://backend:8080`; the
+AWS PoC supplies the managed ECS backend endpoint.
 
 ```bash
 docker build -t sherlock-frontend .

@@ -223,29 +223,8 @@ def create_rule_generation_service(
 ) -> RuleGenerationService:
     """Build isolated metadata and execution clients for the RuleAgent workflow."""
 
-    metadata_clients = MCPClient.load_servers(
-        {
-            "mcpServers": {
-                "fraud-rule-metadata": settings.mcp_server_config(
-                    allowed_tools=GENERATOR_TOOLS
-                )
-            }
-        }
-    )
-    execution_clients = MCPClient.load_servers(
-        {
-            "mcpServers": {
-                "fraud-rule-validation": settings.mcp_server_config(
-                    allowed_tools=("get_schema", "run_query")
-                )
-            }
-        }
-    )
-    if len(metadata_clients) != 1 or len(execution_clients) != 1:
-        raise RuntimeError("Expected one metadata and one validation MCP server")
-
-    metadata_client = metadata_clients[0]
-    execution_client = execution_clients[0]
+    metadata_client = settings.mcp_client(allowed_tools=GENERATOR_TOOLS)
+    execution_client = settings.mcp_client(allowed_tools=("get_schema", "run_query"))
     metadata_owner = object()
     execution_owner = object()
     metadata_client.add_consumer(metadata_owner)

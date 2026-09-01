@@ -7,11 +7,6 @@ variable "aws_region" {
   default = "eu-west-2"
 }
 
-variable "bedrock_model_id" {
-  type    = string
-  default = "anthropic.claude-sonnet-4-6"
-}
-
 variable "image_tag" {
   description = "Docker image tag to deploy"
   type        = string

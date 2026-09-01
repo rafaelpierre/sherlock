@@ -1,17 +1,4 @@
 # ------------------------------------------------------------
-# ECR repository
-# ------------------------------------------------------------
-
-resource "aws_ecr_repository" "agent" {
-  name                 = "${var.project_name}-agent"
-  image_tag_mutability = "IMMUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-}
-
-# ------------------------------------------------------------
 # IAM role assumed by AgentCore
 # ------------------------------------------------------------
 
@@ -65,21 +52,10 @@ data "aws_iam_policy_document" "agentcore_permissions" {
     ]
 
     resources = [
-      aws_ecr_repository.agent.arn
+      "arn:aws:ecr:${var.aws_region}:*:repository/${var.project_name}-mcp"
     ]
   }
 
-  # Our agent can invoke Bedrock
-  statement {
-    effect = "Allow"
-
-    actions = [
-      "bedrock:InvokeModel",
-      "bedrock:InvokeModelWithResponseStream"
-    ]
-
-    resources = ["*"]
-  }
 }
 
 resource "aws_iam_role_policy" "agentcore_permissions" {
@@ -100,7 +76,7 @@ resource "aws_bedrockagentcore_agent_runtime" "agent" {
 
   agent_runtime_artifact {
     container_configuration {
-      container_uri = "${aws_ecr_repository.agent.repository_url}:${var.image_tag}"
+      container_uri = var.image_uri
     }
   }
 
@@ -108,8 +84,7 @@ resource "aws_bedrockagentcore_agent_runtime" "agent" {
     network_mode = "PUBLIC"
   }
 
-  environment_variables = {
-    AWS_REGION       = var.aws_region
-    BEDROCK_MODEL_ID = var.bedrock_model_id
+  protocol_configuration {
+    server_protocol = "MCP"
   }
 }

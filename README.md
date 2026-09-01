@@ -194,6 +194,38 @@ Health checks prove that the processes are ready; they do not call Bedrock.
 Analytical and chat requests still require valid credentials, a region, and
 model access. Stop the stack with `docker compose down`.
 
+### AWS PoC deployment
+
+The optional AWS PoC deploys the frontend and backend as separate ECS Express
+Mode services in `eu-west-2`. Express Mode supplies each service's managed HTTPS
+endpoint, TLS termination, logging, health checks, and one-task deployment
+defaults. The browser service proxies `/v1` to the backend service. The MCP
+server runs as an ARM64 MCP-protocol Amazon Bedrock AgentCore Runtime; the
+backend task uses its ECS task identity to invoke it, so no AWS access keys are
+stored in an image or workflow secret.
+
+Bootstrap the account once from a workstation with AWS administrator access:
+
+```bash
+terraform -chdir=terraform/bootstrap init
+terraform -chdir=terraform/bootstrap apply \
+  -var='project_name=sherlock' \
+  -var='github_owner=rafaelpierre' \
+  -var='github_repo=sherlock'
+```
+
+This creates the `sherlock-frontend`, `sherlock-backend`, and `sherlock-mcp` ECR
+repositories, the GitHub OIDC role, and the S3 state bucket. The repository's
+manual **Deploy AWS PoC** workflow builds multi-architecture images tagged with the commit
+SHA, pushes them to ECR, applies Terraform, and calls the public frontend
+`/health` and proxied `/v1/health` endpoints. Its state bucket and account are
+intentionally fixed to this PoC account (`041391475835`) and region
+(`eu-west-2`).
+
+The initial deployment usually takes several minutes because ECS Express Mode
+creates its managed ingress resources and AgentCore creates a runtime revision.
+Use the workflow's Terraform output `frontend_url` to open the application.
+
 ### Run the application directly
 
 Requirements are Python 3.13+, [`uv`](https://docs.astral.sh/uv/), Node.js
@@ -257,9 +289,9 @@ Service-specific configuration and checks are documented in the
 - Local MCP HTTP has no authentication or TLS. Bindings are loopback-only in
   Compose, but standalone deployments must use a trusted private network or an
   authenticated TLS proxy.
-- Terraform is scaffolding rather than a complete supported deployment, and
-  production concerns such as identity, audit logging, monitoring, and approval
-  workflows are incomplete.
+- The AWS deployment is a one-account PoC. It intentionally has no custom
+  domain, environment promotion, private network topology, application
+  authentication, or production telemetry/retention policy.
 
 ## Next steps
 
