@@ -87,6 +87,7 @@ def test_stdio_args_must_be_a_json_string_array(
     ("variable", "value", "message"),
     [
         ("SHERLOCK_WORKFLOW_DEADLINE_SECONDS", "0", "greater than zero"),
+        ("SHERLOCK_WORKFLOW_DEADLINE_SECONDS", "Infinity", "greater than zero"),
         ("SHERLOCK_MODEL_IN_FLIGHT_LIMIT", "0", "at least 1"),
         ("SHERLOCK_MCP_IN_FLIGHT_LIMIT", "0", "at least 1"),
     ],

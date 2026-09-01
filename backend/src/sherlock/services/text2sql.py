@@ -15,6 +15,7 @@ from strands.tools.mcp import MCPClient
 from sherlock.agent import SQLGeneration, create_sql_generation_agent
 from sherlock.config import Settings
 from sherlock.contracts import MAX_SQL_LENGTH
+from sherlock.execution import run_blocking_provider_call
 
 GENERATOR_TOOLS = ("get_schema", "get_sample_values", "get_database_info")
 REPAIRABLE_ERRORS = frozenset(
@@ -98,7 +99,7 @@ class StrandsSQLGenerator:
 
     async def generate(self, question: str) -> tuple[str, bool]:
         before = self._generate_cached.cache_info()
-        sql = await asyncio.to_thread(self._generate_cached, question)
+        sql = await run_blocking_provider_call(self._generate_cached, question)
         after = self._generate_cached.cache_info()
         return sql, after.hits > before.hits
 
@@ -114,7 +115,7 @@ class StrandsSQLGenerator:
             f"Execution error:\n{json.dumps(error, sort_keys=True)}\n\n"
             "Produce a corrected query. Inspect the schema again if necessary."
         )
-        return await asyncio.to_thread(self._invoke_agent, prompt)
+        return await run_blocking_provider_call(self._invoke_agent, prompt)
 
     def _generate_uncached(self, question: str) -> str:
         return _require_bounded_sql(self._invoke_agent(question))

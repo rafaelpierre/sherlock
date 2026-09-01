@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import cast
 
 import pytest
@@ -16,6 +17,7 @@ from sherlock.execution import (
     WorkflowDeadlineExceeded,
     WorkflowKind,
     WorkflowOverloaded,
+    run_blocking_provider_call,
 )
 from sherlock.services.text2sql import Text2SQLService
 
@@ -66,6 +68,51 @@ def test_cancellation_releases_permits_for_the_next_workflow() -> None:
             pass
 
     asyncio.run(run())
+
+
+def test_cancellation_keeps_permits_while_a_provider_thread_drains() -> None:
+    async def run() -> None:
+        controller = WorkflowController(
+            ExecutionLimits(model_in_flight_limit=1, mcp_in_flight_limit=1)
+        )
+        provider_started = threading.Event()
+        release_provider = threading.Event()
+
+        def blocking_provider() -> None:
+            provider_started.set()
+            release_provider.wait()
+
+        async def invoke() -> None:
+            async with controller.workflow(WorkflowKind.QUERY):
+                await run_blocking_provider_call(blocking_provider)
+
+        task = asyncio.create_task(invoke())
+        while not provider_started.is_set():
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        with pytest.raises(WorkflowOverloaded):
+            await controller.admit(WorkflowKind.QUERY)
+
+        release_provider.set()
+        while True:
+            try:
+                lease = await controller.admit(WorkflowKind.QUERY)
+            except WorkflowOverloaded:
+                await asyncio.sleep(0)
+            else:
+                async with lease:
+                    pass
+                break
+
+    asyncio.run(run())
+
+
+def test_execution_limits_reject_non_finite_deadlines() -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        ExecutionLimits(deadline_seconds=float("inf"))
 
 
 def test_safe_workflow_telemetry_has_no_request_content(

@@ -310,27 +310,27 @@ async def _traced_chat_event_stream(
     """Keep the root span open for the full SSE turn, including cancellation."""
 
     outcome = SpanOutcome()
-    try:
-        async with (
-            lease,
-            span(
-                CHAT_TURN_SPAN,
-                attributes={"sherlock.chat.history_messages": history_messages},
-                kind=SpanKind.SERVER,
-                outcome=outcome,
-            ),
-            span("sherlock.chat.agent", outcome=outcome),
-        ):
-            async for event in _chat_event_stream(events, outcome):
-                yield event
-    except WorkflowDeadlineExceeded as exc:
-        outcome.fail(exc)
-        yield _sse(
-            "error",
-            ChatStreamError(
-                message="Sherlock could not complete the request in time. Please try again."
-            ),
-        )
+    async with (
+        span(
+            CHAT_TURN_SPAN,
+            attributes={"sherlock.chat.history_messages": history_messages},
+            kind=SpanKind.SERVER,
+            outcome=outcome,
+        ),
+        span("sherlock.chat.agent", outcome=outcome),
+    ):
+        try:
+            async with lease:
+                async for event in _chat_event_stream(events, outcome):
+                    yield event
+        except WorkflowDeadlineExceeded as exc:
+            outcome.fail(exc)
+            yield _sse(
+                "error",
+                ChatStreamError(
+                    message="Sherlock could not complete the request in time. Please try again."
+                ),
+            )
 
 
 @router.post("/rules/generate", response_model=RuleGenerateResponse)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,7 +120,10 @@ class Settings:
             agentcore_runtime_arn=os.getenv("SHERLOCK_AGENTCORE_RUNTIME_ARN"),
             phoenix_secret_id=os.getenv("SHERLOCK_PHOENIX_SECRET_ID"),
         )
-        if settings.workflow_deadline_seconds <= 0:
+        if (
+            not math.isfinite(settings.workflow_deadline_seconds)
+            or settings.workflow_deadline_seconds <= 0
+        ):
             raise ValueError(
                 "SHERLOCK_WORKFLOW_DEADLINE_SECONDS must be greater than zero"
             )
