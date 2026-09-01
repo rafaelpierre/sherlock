@@ -4,19 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       frontend_image_tag:
-        description: Immutable 40-character commit-SHA tag published to sherlock-frontend
-        required: true
+        description: Optional frontend image-tag override (40-character commit SHA)
+        required: false
         type: string
       backend_image_tag:
-        description: Immutable 40-character commit-SHA tag published to sherlock-backend
-        required: true
+        description: Optional backend image-tag override (40-character commit SHA)
+        required: false
         type: string
       mcp_image_tag:
-        description: Immutable 40-character commit-SHA tag published to sherlock-mcp
-        required: true
+        description: Optional MCP image-tag override (40-character commit SHA)
+        required: false
         type: string
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -38,17 +39,65 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity
 
-      - name: Verify selected immutable image manifests
+      - name: Resolve and verify immutable image releases
+        id: releases
         env:
-          FRONTEND_IMAGE_TAG: ${{ inputs.frontend_image_tag }}
-          BACKEND_IMAGE_TAG: ${{ inputs.backend_image_tag }}
-          MCP_IMAGE_TAG: ${{ inputs.mcp_image_tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+          FRONTEND_IMAGE_TAG_OVERRIDE: ${{ inputs.frontend_image_tag }}
+          BACKEND_IMAGE_TAG_OVERRIDE: ${{ inputs.backend_image_tag }}
+          MCP_IMAGE_TAG_OVERRIDE: ${{ inputs.mcp_image_tag }}
         run: |
-          for selection in "frontend:$FRONTEND_IMAGE_TAG" "backend:$BACKEND_IMAGE_TAG" "mcp:$MCP_IMAGE_TAG"; do
-            service="${selection%%:*}"
-            image_tag="${selection#*:}"
+          set -euo pipefail
+
+          release_dir="$(mktemp -d)"
+          trap 'rm -rf "$release_dir"' EXIT
+          gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" > "$release_dir/artifacts.json"
+
+          resolve_image_tag() {
+            local service="$1"
+            local override="$2"
+            local artifact_prefix artifact_id archive release
+
+            if [[ -n "$override" ]]; then
+              echo "Using explicit ${service} image-tag override ${override}." >&2
+              echo "$override"
+              return
+            fi
+
+            artifact_prefix="sherlock-${service}-image-"
+            artifact_id="$(jq -rs --arg prefix "$artifact_prefix" '[.[].artifacts[] | select(.expired == false and (.name | startswith($prefix)))] | sort_by(.created_at) | last | .id // empty' "$release_dir/artifacts.json")"
+            if [[ -z "$artifact_id" ]]; then
+              echo "No unexpired ${service} image release artifact was found. Publish that service image first or provide an explicit ${service}_image_tag override." >&2
+              exit 1
+            fi
+
+            archive="$release_dir/${service}.zip"
+            release="$release_dir/${service}.json"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "$archive"
+            if ! unzip -p "$archive" image-release.json > "$release"; then
+              echo "Release artifact ${artifact_id} for ${service} does not contain image-release.json." >&2
+              exit 1
+            fi
+
+            if ! jq -e --arg service "$service" '
+              .service == $service
+              and (.source_commit | test("^[0-9a-f]{40}$"))
+              and .image_tag == .source_commit
+              and (.image_digest | test("^sha256:[0-9a-f]{64}$"))
+            ' "$release" >/dev/null; then
+              echo "Release artifact ${artifact_id} for ${service} has invalid or inconsistent metadata." >&2
+              exit 1
+            fi
+
+            echo "Resolved ${service} from artifact ${artifact_id}: commit $(jq -r '.source_commit'), tag $(jq -r '.image_tag'), digest $(jq -r '.image_digest')." >&2
+            jq -r '.image_tag' "$release"
+          }
+
+          for service in frontend backend mcp; do
+            override_name="${service^^}_IMAGE_TAG_OVERRIDE"
+            image_tag="$(resolve_image_tag "$service" "${!override_name}")"
             if ! [[ "$image_tag" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "Invalid $service image tag '$image_tag': provide the 40-character lowercase commit SHA from its image release artifact." >&2
+              echo "Invalid $service image tag '$image_tag': provide a lowercase 40-character commit SHA." >&2
               exit 1
             fi
             media_type="$(aws ecr describe-images --repository-name "sherlock-$service" --image-ids imageTag="$image_tag" --query 'imageDetails[0].imageManifestMediaType' --output text 2>/dev/null)" || {
@@ -59,6 +108,9 @@ jobs:
               echo "Selected $service image tag '$image_tag' is not a multi-architecture image manifest." >&2
               exit 1
             fi
+            image_digest="$(aws ecr describe-images --repository-name "sherlock-$service" --image-ids imageTag="$image_tag" --query 'imageDetails[0].imageDigest' --output text)"
+            echo "Deploying ${service}: ${image_tag} (${image_digest})"
+            echo "${service}_image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
           done
 
       - name: Initialize Terraform state
@@ -68,7 +120,7 @@ jobs:
         run: terraform -chdir=terraform validate
 
       - name: Apply infrastructure
-        run: terraform -chdir=terraform apply -input=false -auto-approve -var='project_name=sherlock' -var='frontend_image_tag=${{ inputs.frontend_image_tag }}' -var='backend_image_tag=${{ inputs.backend_image_tag }}' -var='mcp_image_tag=${{ inputs.mcp_image_tag }}'
+        run: terraform -chdir=terraform apply -input=false -auto-approve -var='project_name=sherlock' -var='frontend_image_tag=${{ steps.releases.outputs.frontend_image_tag }}' -var='backend_image_tag=${{ steps.releases.outputs.backend_image_tag }}' -var='mcp_image_tag=${{ steps.releases.outputs.mcp_image_tag }}'
 
       - name: Smoke test the deployed browser path
         run: |
