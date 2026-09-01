@@ -101,6 +101,10 @@ def test_runner_continues_after_failures_and_summarizes_metadata() -> None:
         "total_latency_ms": 60.0,
         "repair_count": 1,
         "repair_rate": 0.5,
+        "validation_passed": 0,
+        "execution_passed": 0,
+        "semantic_correct": 0,
+        "semantic_evaluated": 0,
     }
     assert report.metadata.dataset_revision == "test-data-v1"
 
@@ -132,3 +136,93 @@ def test_runner_does_not_treat_booleans_as_numeric_oracle_matches() -> None:
     )
 
     assert report.results[0].status == "failed"
+
+
+def test_rule_runner_records_validation_execution_and_semantic_metrics() -> None:
+    suite = EvaluationSuite.model_validate(
+        {
+            "schema_version": 1,
+            "name": "rules",
+            "description": "Rule metrics.",
+            "kind": "rule_generation",
+            "cases": [
+                {
+                    "id": "correct",
+                    "prompt": "correct",
+                    "expected": {"valid": True},
+                    "rule_oracle": {
+                        "reference_predicate": "amount_usd > 1000",
+                        "matching_policy": "exact_transaction_ids",
+                        "transaction_id_tolerance": 0,
+                    },
+                },
+                {
+                    "id": "wrong-ids",
+                    "prompt": "wrong",
+                    "expected": {"valid": True},
+                    "rule_oracle": {
+                        "reference_predicate": "amount_usd > 1000",
+                        "matching_policy": "exact_transaction_ids",
+                        "transaction_id_tolerance": 0,
+                    },
+                },
+                {
+                    "id": "not-executable",
+                    "prompt": "invalid",
+                    "expected": {"valid": True},
+                    "rule_oracle": {
+                        "reference_predicate": "amount_usd > 1000",
+                        "matching_policy": "exact_transaction_ids",
+                        "transaction_id_tolerance": 0,
+                    },
+                },
+            ],
+        }
+    )
+    service = FakeService(
+        {
+            "correct": {
+                "valid": True,
+                "matched_transaction_ids": ["2", "1"],
+                "reference_transaction_ids": ["1", "2"],
+            },
+            "wrong-ids": {
+                "valid": True,
+                "matched_transaction_ids": ["1"],
+                "reference_transaction_ids": ["2"],
+            },
+            "not-executable": {"valid": False, "errors": [{"code": "UNKNOWN_COLUMN"}]},
+        }
+    )
+
+    report = asyncio.run(EvaluationRunner(service).run([suite], metadata()))
+
+    assert [result.status for result in report.results] == [
+        "passed",
+        "failed",
+        "failed",
+    ]
+    assert [result.validation_passed for result in report.results] == [
+        True,
+        True,
+        False,
+    ]
+    assert [result.execution_passed for result in report.results] == [True, True, False]
+    assert [result.semantic_correct for result in report.results] == [
+        True,
+        False,
+        False,
+    ]
+    assert report.summary.model_dump(
+        include={
+            "validation_passed",
+            "execution_passed",
+            "semantic_correct",
+            "semantic_evaluated",
+        }
+    ) == {
+        "validation_passed": 2,
+        "execution_passed": 2,
+        "semantic_correct": 1,
+        "semantic_evaluated": 3,
+    }

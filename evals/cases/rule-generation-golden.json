@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "name": "rule-generation-golden",
+  "description": "Deterministic candidate-rule generation and repair cases with exact transaction-ID semantic oracles.",
+  "kind": "rule_generation",
+  "cases": [
+    {
+      "id": "amount-usd-threshold",
+      "prompt": "Create a rule for transactions over $6,500.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "amount_usd > 6500", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "amount_usd > 6500", "valid": true, "repair_count": 0, "errors": [], "matched_transaction_ids": ["amount-usd-1"], "reference_transaction_ids": ["amount-usd-1"]}
+    },
+    {
+      "id": "amount-cents-threshold",
+      "prompt": "Flag transactions of at least $6,500 using the canonical cents amount field.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "amount_usd_cents >= 650000", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "amount_usd_cents >= 650000", "valid": true, "repair_count": 0, "errors": [], "matched_transaction_ids": ["amount-cents-1"], "reference_transaction_ids": ["amount-cents-1"]}
+    },
+    {
+      "id": "debit-card-category",
+      "prompt": "Create a rule for debit-card transactions on card 5339.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "card_type = 'Debit' AND card_id = 5339", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "card_type = 'Debit' AND card_id = 5339", "valid": true, "repair_count": 0, "errors": [], "matched_transaction_ids": ["debit-1", "debit-2"], "reference_transaction_ids": ["debit-1", "debit-2"]}
+    },
+    {
+      "id": "merchant-category",
+      "prompt": "Create a rule for purchases at cruise lines.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "merchant_category = 'Cruise Lines'", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "merchant_category = 'Cruise Lines'", "valid": true, "repair_count": 0, "errors": [], "matched_transaction_ids": ["cruise-1"], "reference_transaction_ids": ["cruise-1"]}
+    },
+    {
+      "id": "compound-amount-and-card-type",
+      "prompt": "Flag credit-card transactions over $6,500.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "amount_usd > 6500 AND card_type = 'Credit'", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "amount_usd > 6500 AND card_type = 'Credit'", "valid": true, "repair_count": 0, "errors": [], "matched_transaction_ids": ["compound-1"], "reference_transaction_ids": ["compound-1"]}
+    },
+    {
+      "id": "present-error-code",
+      "prompt": "Create a rule for transactions that have an error code.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "errors IS NOT NULL", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "NOT errors IS NULL", "valid": true, "repair_count": 0, "errors": [], "matched_transaction_ids": ["error-1"], "reference_transaction_ids": ["error-1"]}
+    },
+    {
+      "id": "late-night-transaction",
+      "prompt": "Create a rule for transactions at 10pm or later.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "transaction_hour >= 22", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "transaction_hour >= 22", "valid": true, "repair_count": 0, "errors": [], "matched_transaction_ids": ["late-1"], "reference_transaction_ids": ["late-1"]}
+    },
+    {
+      "id": "dark-web-card",
+      "prompt": "Create a rule for transactions from dark-web card 1046.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "card_on_dark_web = 1 AND card_id = 1046", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "card_on_dark_web = 1 AND card_id = 1046", "valid": true, "repair_count": 0, "errors": [], "matched_transaction_ids": ["dark-web-1"], "reference_transaction_ids": ["dark-web-1"]}
+    },
+    {
+      "id": "repair-unknown-column",
+      "prompt": "Create a rule for debit transactions on card 5339; repair any non-canonical card field.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "card_type = 'Debit' AND card_id = 5339", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "card_type = 'Debit' AND card_id = 5339", "valid": true, "repair_count": 1, "errors": [], "matched_transaction_ids": ["repair-column-1"], "reference_transaction_ids": ["repair-column-1"]}
+    },
+    {
+      "id": "repair-outcome-only-feature",
+      "prompt": "Create a rule for card 370 with an amount-to-credit-limit ratio above 0.5; repair any outcome-only feature.",
+      "expected": {"valid": true},
+      "rule_oracle": {"reference_predicate": "amount_to_credit_limit_ratio > 0.5 AND card_id = 370", "matching_policy": "exact_transaction_ids", "transaction_id_tolerance": 0},
+      "fixture_response": {"rule": "amount_to_credit_limit_ratio > 0.5 AND card_id = 370", "valid": true, "repair_count": 1, "errors": [], "matched_transaction_ids": ["repair-outcome-1"], "reference_transaction_ids": ["repair-outcome-1"]}
+    }
+  ]
+}

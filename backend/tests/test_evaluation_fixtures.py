@@ -90,3 +90,11 @@ def test_suite_rejects_duplicate_case_ids() -> None:
 
     with pytest.raises(ValidationError, match="case ids must be unique"):
         EvaluationSuite.model_validate(payload)
+
+
+def test_rule_generation_suite_requires_an_explicit_semantic_oracle() -> None:
+    payload = suite_payload()
+    payload["kind"] = "rule_generation"
+
+    with pytest.raises(ValidationError, match="must define rule_oracle"):
+        EvaluationSuite.model_validate(payload)

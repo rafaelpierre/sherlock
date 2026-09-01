@@ -92,7 +92,9 @@ outcome-null rows to be treated as non-fraud.
 
 The shared evaluation runner loads versioned JSON suites from `evals/cases`,
 executes all or a selected subset, prints a concise summary, and writes a
-machine-readable JSON report.
+machine-readable JSON report. Rule-generation cases additionally record whether
+the candidate predicate passed deterministic validation, executed for matching,
+and selected exactly the same transaction IDs as their reference predicate.
 
 From a clean checkout, run the deterministic smoke suite without credentials or
 network access:
@@ -131,10 +133,17 @@ Every `evals/cases/*.json` file has this shape:
 
 `kind` is `text2sql` or `rule_generation`. The runner recursively compares the
 fields in `expected` with the service response; extra response fields are
-allowed. Lists remain order-sensitive in schema version 1. The future domain
-suites may extend their comparison policies without changing the report
-contract. `fixture_response` drives deterministic offline runs and is required
-unless `--live` is used.
+allowed. Lists remain order-sensitive in schema version 1. `fixture_response`
+drives deterministic offline runs and is required unless `--live` is used.
+
+Every `rule_generation` case also requires a `rule_oracle` with a canonical
+`reference_predicate`, `matching_policy: "exact_transaction_ids"`, and
+`transaction_id_tolerance: 0`. The live runner executes both the generated and
+reference predicates through MCP, orders their IDs, and compares them as unique
+sets. This makes the zero tolerance explicit while allowing equivalent SQL
+syntax and predicate ordering. Invalid or non-executable generated rules fail
+validation or execution respectively and cannot be counted as semantically
+correct.
 
 Suite names and case IDs use lowercase letters, digits, hyphens, and underscores.
 Names must be unique across files, and case IDs must be unique within a suite.
@@ -164,8 +173,11 @@ secret-bearing configuration in suite fixtures or revision labels.
 Live results are not perfectly reproducible: managed model versions, provider
 sampling, service changes, and latency can vary even when the model identifier,
 dataset revision, and local configuration match. Reports therefore record the
-UTC run date, mode, model, safe runner configuration, dataset revision, case
-latency, and repair metadata.
+UTC run date, mode, model, safe runner configuration (including the selected
+case count and MCP startup timeout), dataset revision, case latency, repair metadata, and the
+transaction-ID comparison policy. Keep a reviewed live baseline under a
+descriptive, dated filename outside ordinary CI; fixture results and live
+baselines are intentionally separate evidence.
 
 `repair_count` is the number of repair attempts for a case. `repair_rate` is the
 fraction of non-error cases that required at least one repair.

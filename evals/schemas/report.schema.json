@@ -37,6 +37,21 @@
           "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
           "title": "Error"
+        },
+        "validation_passed": {
+          "anyOf": [{"type": "boolean"}, {"type": "null"}],
+          "default": null,
+          "title": "Validation Passed"
+        },
+        "execution_passed": {
+          "anyOf": [{"type": "boolean"}, {"type": "null"}],
+          "default": null,
+          "title": "Execution Passed"
+        },
+        "semantic_correct": {
+          "anyOf": [{"type": "boolean"}, {"type": "null"}],
+          "default": null,
+          "title": "Semantic Correct"
         }
       },
       "required": [
@@ -72,6 +87,26 @@
           "minimum": 0,
           "title": "Repair Rate",
           "type": "number"
+        },
+        "validation_passed": {
+          "minimum": 0,
+          "title": "Validation Passed",
+          "type": "integer"
+        },
+        "execution_passed": {
+          "minimum": 0,
+          "title": "Execution Passed",
+          "type": "integer"
+        },
+        "semantic_correct": {
+          "minimum": 0,
+          "title": "Semantic Correct",
+          "type": "integer"
+        },
+        "semantic_evaluated": {
+          "minimum": 0,
+          "title": "Semantic Evaluated",
+          "type": "integer"
         }
       },
       "required": [
@@ -81,7 +116,11 @@
         "errors",
         "total_latency_ms",
         "repair_count",
-        "repair_rate"
+        "repair_rate",
+        "validation_passed",
+        "execution_passed",
+        "semantic_correct",
+        "semantic_evaluated"
       ],
       "title": "EvaluationSummary",
       "type": "object"

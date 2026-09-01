@@ -24,6 +24,17 @@ class EvaluationCase(BaseModel):
     prompt: str = Field(min_length=1, max_length=2_000)
     expected: dict[str, JSONValue] = Field(min_length=1)
     fixture_response: dict[str, JSONValue] | None = None
+    rule_oracle: RuleGenerationOracle | None = None
+
+
+class RuleGenerationOracle(BaseModel):
+    """Semantic comparison contract for one candidate-rule generation case."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reference_predicate: str = Field(min_length=1, max_length=2_000)
+    matching_policy: Literal["exact_transaction_ids"]
+    transaction_id_tolerance: Literal[0] = 0
 
 
 class EvaluationSuite(BaseModel):
@@ -42,6 +53,14 @@ class EvaluationSuite(BaseModel):
         case_ids = [case.id for case in self.cases]
         if len(case_ids) != len(set(case_ids)):
             raise ValueError("case ids must be unique within a suite")
+        return self
+
+    @model_validator(mode="after")
+    def rule_generation_cases_must_define_semantic_oracles(self) -> EvaluationSuite:
+        if self.kind == "rule_generation" and any(
+            case.rule_oracle is None for case in self.cases
+        ):
+            raise ValueError("rule_generation cases must define rule_oracle")
         return self
 
 
@@ -70,6 +89,9 @@ class EvaluationCaseResult(BaseModel):
     repair_count: int = Field(ge=0)
     output: dict[str, JSONValue] | None = None
     error: str | None = None
+    validation_passed: bool | None = None
+    execution_passed: bool | None = None
+    semantic_correct: bool | None = None
 
 
 class EvaluationSummary(BaseModel):
@@ -84,6 +106,10 @@ class EvaluationSummary(BaseModel):
     total_latency_ms: float = Field(ge=0)
     repair_count: int = Field(ge=0)
     repair_rate: float = Field(ge=0, le=1)
+    validation_passed: int = Field(ge=0)
+    execution_passed: int = Field(ge=0)
+    semantic_correct: int = Field(ge=0)
+    semantic_evaluated: int = Field(ge=0)
 
 
 class EvaluationReport(BaseModel):
