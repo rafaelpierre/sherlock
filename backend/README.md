@@ -137,6 +137,28 @@ curl -N -X POST http://localhost:8080/v1/chat \
 Clients that do not request SSE continue to receive the JSON response and HTTP
 error contract shown above.
 
+## Execution budgets
+
+Each backend worker applies an end-to-end budget to `/v1/query`, candidate-rule
+generation/refinement, backtesting/comparison, and chat (including SSE). The
+same deadline covers MCP client startup, model calls, validation, and bounded
+repair work. A worker admits work without a local wait queue: model-capable
+work reserves both a model and MCP permit, while deterministic backtesting and
+comparison reserve an MCP permit. Excess work returns `503` with `Retry-After`;
+expired JSON work returns `504`, while an already-open SSE response emits a
+safe `error` event. Client cancellation releases local permits and propagates
+cancellation to downstream async work where the provider supports it.
+
+Defaults can be changed per worker with these validated environment variables:
+
+- `SHERLOCK_WORKFLOW_DEADLINE_SECONDS=240`
+- `SHERLOCK_MODEL_IN_FLIGHT_LIMIT=8`
+- `SHERLOCK_MCP_IN_FLIGHT_LIMIT=16`
+
+The backend records only workflow class, outcome class, and elapsed time for
+these controls; it never logs prompts, SQL, transaction rows, tool arguments,
+or model reasoning.
+
 ## Run locally with stdio
 
 The default transport is stdio. The backend starts the sibling MCP project as a
@@ -209,6 +231,9 @@ user; AWS credentials remain outside the image.
 | `SHERLOCK_MCP_STDIO_ARGS` | local sibling MCP command | JSON array of command arguments |
 | `SHERLOCK_MCP_HTTP_HEADERS` | unset | JSON object of HTTP headers |
 | `SHERLOCK_MCP_STARTUP_TIMEOUT` | `30` | MCP initialization timeout in seconds |
+| `SHERLOCK_WORKFLOW_DEADLINE_SECONDS` | `240` | End-to-end workflow deadline in seconds |
+| `SHERLOCK_MODEL_IN_FLIGHT_LIMIT` | `8` | Maximum model-capable workflows per worker |
+| `SHERLOCK_MCP_IN_FLIGHT_LIMIT` | `16` | Maximum MCP-backed workflows per worker |
 | `SHERLOCK_PHOENIX_SECRET_ID` | unset | AWS Secrets Manager ARN containing Phoenix OTLP credentials |
 
 ## Phoenix OpenTelemetry tracing

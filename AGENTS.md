@@ -52,11 +52,12 @@ priority, acceptance criteria, and follow-up work.
   may perform sequential Text2SQL investigations and synthesize only from their
   completed evidence; it must use `Text2SQLService`, never a direct database
   path. Keep its query, model-turn, output, deadline, cancellation, and failure
-  bounds enforced in code rather than by prompt text alone. The remaining
-  cross-workflow budget hardening and cumulative SSE-artifact bound are tracked
-  by [#79](https://github.com/rafaelpierre/sherlock/issues/79) and
+  bounds enforced in code rather than by prompt text alone. Per-worker
+  end-to-end workflow deadlines and admission controls are delivered by
+  [#79](https://github.com/rafaelpierre/sherlock/issues/79). The cumulative
+  SSE-artifact bound remains tracked by
   [#91](https://github.com/rafaelpierre/sherlock/issues/91); do not imply that
-  either is already delivered. Do not introduce hidden server-side conversation,
+  it is already delivered. Do not introduce hidden server-side conversation,
   handoff, or plan state.
 - Specialist agents and deterministic services must remain independently
   callable by their domain endpoints. Agent prose is never the authoritative

@@ -13,6 +13,7 @@ from sherlock.api.auth import CognitoTokenVerifier
 from sherlock.api.routes import router
 from sherlock.chat import ChatAgentFactory
 from sherlock.config import Settings
+from sherlock.execution import ExecutionLimits, WorkflowController
 from sherlock.services.backtest import create_backtest_service
 from sherlock.services.rule_comparison import RuleComparisonService
 from sherlock.services.rule_generation import create_rule_generation_service
@@ -43,6 +44,13 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         backtest_service,
         rule_comparison_service,
     )
+    application.state.workflow_controller = WorkflowController(
+        ExecutionLimits(
+            deadline_seconds=settings.workflow_deadline_seconds,
+            model_in_flight_limit=settings.model_in_flight_limit,
+            mcp_in_flight_limit=settings.mcp_in_flight_limit,
+        )
+    )
     application.state.text2sql_service = text2sql_service
     application.state.rule_generation_service = rule_generation_service
     application.state.backtest_service = backtest_service
@@ -51,6 +59,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await application.state.workflow_controller.drain_provider_calls()
         backtest_service.close()
         rule_generation_service.close()
         text2sql_service.close()

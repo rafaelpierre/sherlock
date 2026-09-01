@@ -12,6 +12,7 @@ from strands.tools.mcp import MCPClient
 
 from sherlock.agent import RuleGeneration, create_rule_generation_agent
 from sherlock.config import Settings
+from sherlock.execution import run_blocking_provider_call
 from sherlock.services.rule_validation import (
     MCPSchemaProvider,
     RuleValidationResult,
@@ -75,7 +76,7 @@ class StrandsRuleGenerator:
         self._model = model
 
     async def generate(self, instruction: str) -> str:
-        return await asyncio.to_thread(self._invoke, instruction)
+        return await run_blocking_provider_call(self._invoke, instruction)
 
     async def repair(
         self,
@@ -89,7 +90,7 @@ class StrandsRuleGenerator:
             f"Validation errors:\n{json.dumps(validation.as_dict(), sort_keys=True)}\n\n"
             "Return a corrected WHERE predicate."
         )
-        return await asyncio.to_thread(self._invoke, prompt)
+        return await run_blocking_provider_call(self._invoke, prompt)
 
     async def refine(self, rule: str, instruction: str) -> str:
         prompt = (
@@ -98,7 +99,7 @@ class StrandsRuleGenerator:
             "Return the complete refined WHERE predicate. Preserve every unrelated "
             "condition and apply only the requested modification."
         )
-        return await asyncio.to_thread(self._invoke, prompt)
+        return await run_blocking_provider_call(self._invoke, prompt)
 
     async def repair_refinement(
         self,
@@ -116,7 +117,7 @@ class StrandsRuleGenerator:
             "condition from the current candidate rule and apply only the requested "
             "modification."
         )
-        return await asyncio.to_thread(self._invoke, prompt)
+        return await run_blocking_provider_call(self._invoke, prompt)
 
     def _invoke(self, prompt: str) -> str:
         agent = create_rule_generation_agent(self._client, model=self._model)

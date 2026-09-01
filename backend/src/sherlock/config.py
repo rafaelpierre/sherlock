@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,6 +80,9 @@ class Settings:
     mcp_stdio_args: tuple[str, ...] = DEFAULT_STDIO_ARGS
     mcp_http_headers: dict[str, str] | None = None
     mcp_startup_timeout: int = 30
+    workflow_deadline_seconds: float = 240.0
+    model_in_flight_limit: int = 8
+    mcp_in_flight_limit: int = 16
     agentcore_runtime_arn: str | None = None
     phoenix_secret_id: str | None = None
     cognito_issuer: str | None = None
@@ -113,7 +117,7 @@ class Settings:
                 "SHERLOCK_COGNITO_ISSUER and SHERLOCK_COGNITO_CLIENT_ID are required when authentication is enabled"
             )
 
-        return cls(
+        settings = cls(
             mcp_transport=transport,
             mcp_url=os.getenv("SHERLOCK_MCP_URL", "http://localhost:8000/mcp").strip(),
             mcp_stdio_command=os.getenv("SHERLOCK_MCP_STDIO_COMMAND", "uv").strip(),
@@ -128,12 +132,29 @@ class Settings:
                 else None
             ),
             mcp_startup_timeout=int(os.getenv("SHERLOCK_MCP_STARTUP_TIMEOUT", "30")),
+            workflow_deadline_seconds=float(
+                os.getenv("SHERLOCK_WORKFLOW_DEADLINE_SECONDS", "240")
+            ),
+            model_in_flight_limit=int(os.getenv("SHERLOCK_MODEL_IN_FLIGHT_LIMIT", "8")),
+            mcp_in_flight_limit=int(os.getenv("SHERLOCK_MCP_IN_FLIGHT_LIMIT", "16")),
             agentcore_runtime_arn=os.getenv("SHERLOCK_AGENTCORE_RUNTIME_ARN"),
             phoenix_secret_id=os.getenv("SHERLOCK_PHOENIX_SECRET_ID"),
             cognito_issuer=cognito_issuer.rstrip("/") if cognito_issuer else None,
             cognito_client_id=cognito_client_id,
             auth_required=auth_required,
         )
+        if (
+            not math.isfinite(settings.workflow_deadline_seconds)
+            or settings.workflow_deadline_seconds <= 0
+        ):
+            raise ValueError(
+                "SHERLOCK_WORKFLOW_DEADLINE_SECONDS must be greater than zero"
+            )
+        if settings.model_in_flight_limit < 1:
+            raise ValueError("SHERLOCK_MODEL_IN_FLIGHT_LIMIT must be at least 1")
+        if settings.mcp_in_flight_limit < 1:
+            raise ValueError("SHERLOCK_MCP_IN_FLIGHT_LIMIT must be at least 1")
+        return settings
 
     def mcp_server_config(
         self,
