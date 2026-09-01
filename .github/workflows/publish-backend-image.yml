@@ -1,0 +1,100 @@
+name: Publish backend image
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/publish-backend-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/publish-backend-image.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend for linux/${{ matrix.architecture }}
+        run: docker buildx build --platform linux/${{ matrix.architecture }} --output type=oci,dest=/tmp/sherlock-backend-${{ matrix.architecture }}.tar backend
+
+  publish-platform:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [amd64, arm64]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::041391475835:role/terraform-github
+          aws-region: eu-west-2
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Publish backend for linux/${{ matrix.architecture }}
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if aws ecr describe-images --repository-name sherlock-backend --image-ids imageTag="$IMAGE_TAG-${{ matrix.architecture }}" >/dev/null 2>&1; then
+            echo "sherlock-backend:$IMAGE_TAG-${{ matrix.architecture }} already exists; leaving immutable image unchanged"
+            exit 0
+          fi
+          docker buildx build --platform linux/${{ matrix.architecture }} --push --tag "$REGISTRY/sherlock-backend:$IMAGE_TAG-${{ matrix.architecture }}" backend
+
+  publish-manifest:
+    if: github.event_name == 'push'
+    needs: publish-platform
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::041391475835:role/terraform-github
+          aws-region: eu-west-2
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Publish backend multi-architecture manifest
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if aws ecr describe-images --repository-name sherlock-backend --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "sherlock-backend:$IMAGE_TAG already exists; leaving immutable image unchanged"
+            exit 0
+          fi
+          docker buildx imagetools create --tag "$REGISTRY/sherlock-backend:$IMAGE_TAG" "$REGISTRY/sherlock-backend:$IMAGE_TAG-amd64" "$REGISTRY/sherlock-backend:$IMAGE_TAG-arm64"
+      - name: Record immutable image release
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          IMAGE_DIGEST="$(aws ecr describe-images --repository-name sherlock-backend --image-ids imageTag="$IMAGE_TAG" --query 'imageDetails[0].imageDigest' --output text)"
+          test -n "$IMAGE_DIGEST" && test "$IMAGE_DIGEST" != "None"
+          printf '{"service":"backend","source_commit":"%s","image_tag":"%s","image_digest":"%s"}\n' "$SOURCE_COMMIT" "$IMAGE_TAG" "$IMAGE_DIGEST" > image-release.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sherlock-backend-image-${{ github.sha }}
+          path: image-release.json
+          retention-days: 90

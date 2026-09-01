@@ -3,8 +3,16 @@ name: Deploy AWS PoC
 on:
   workflow_dispatch:
     inputs:
-      image_tag:
-        description: Immutable commit-SHA tag already published to all three ECR repositories
+      frontend_image_tag:
+        description: Immutable 40-character commit-SHA tag published to sherlock-frontend
+        required: true
+        type: string
+      backend_image_tag:
+        description: Immutable 40-character commit-SHA tag published to sherlock-backend
+        required: true
+        type: string
+      mcp_image_tag:
+        description: Immutable 40-character commit-SHA tag published to sherlock-mcp
         required: true
         type: string
 
@@ -30,12 +38,27 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity
 
-      - name: Verify the selected image set is published
+      - name: Verify selected immutable image manifests
         env:
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          FRONTEND_IMAGE_TAG: ${{ inputs.frontend_image_tag }}
+          BACKEND_IMAGE_TAG: ${{ inputs.backend_image_tag }}
+          MCP_IMAGE_TAG: ${{ inputs.mcp_image_tag }}
         run: |
-          for service in frontend backend mcp; do
-            aws ecr describe-images --repository-name "sherlock-$service" --image-ids imageTag="$IMAGE_TAG" >/dev/null
+          for selection in "frontend:$FRONTEND_IMAGE_TAG" "backend:$BACKEND_IMAGE_TAG" "mcp:$MCP_IMAGE_TAG"; do
+            service="${selection%%:*}"
+            image_tag="${selection#*:}"
+            if ! [[ "$image_tag" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Invalid $service image tag '$image_tag': provide the 40-character lowercase commit SHA from its image release artifact." >&2
+              exit 1
+            fi
+            media_type="$(aws ecr describe-images --repository-name "sherlock-$service" --image-ids imageTag="$image_tag" --query 'imageDetails[0].imageManifestMediaType' --output text 2>/dev/null)" || {
+              echo "Selected $service image tag '$image_tag' was not found in ECR." >&2
+              exit 1
+            }
+            if [[ "$media_type" != "application/vnd.oci.image.index.v1+json" && "$media_type" != "application/vnd.docker.distribution.manifest.list.v2+json" ]]; then
+              echo "Selected $service image tag '$image_tag' is not a multi-architecture image manifest." >&2
+              exit 1
+            fi
           done
 
       - name: Initialize Terraform state
@@ -45,7 +68,7 @@ jobs:
         run: terraform -chdir=terraform validate
 
       - name: Apply infrastructure
-        run: terraform -chdir=terraform apply -input=false -auto-approve -var='project_name=sherlock' -var='image_tag=${{ inputs.image_tag }}'
+        run: terraform -chdir=terraform apply -input=false -auto-approve -var='project_name=sherlock' -var='frontend_image_tag=${{ inputs.frontend_image_tag }}' -var='backend_image_tag=${{ inputs.backend_image_tag }}' -var='mcp_image_tag=${{ inputs.mcp_image_tag }}'
 
       - name: Smoke test the deployed browser path
         run: |

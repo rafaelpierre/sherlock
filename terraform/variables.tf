@@ -7,7 +7,32 @@ variable "aws_region" {
   default = "eu-west-2"
 }
 
-variable "image_tag" {
-  description = "Docker image tag to deploy"
+variable "frontend_image_tag" {
+  description = "Immutable frontend multi-architecture image tag to deploy"
   type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.frontend_image_tag))
+    error_message = "frontend_image_tag must be a lowercase 40-character commit SHA."
+  }
+}
+
+variable "backend_image_tag" {
+  description = "Immutable backend multi-architecture image tag to deploy"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.backend_image_tag))
+    error_message = "backend_image_tag must be a lowercase 40-character commit SHA."
+  }
+}
+
+variable "mcp_image_tag" {
+  description = "Immutable MCP multi-architecture image tag to deploy"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.mcp_image_tag))
+    error_message = "mcp_image_tag must be a lowercase 40-character commit SHA."
+  }
 }
