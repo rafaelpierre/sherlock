@@ -81,6 +81,9 @@ class Settings:
     mcp_startup_timeout: int = 30
     agentcore_runtime_arn: str | None = None
     phoenix_secret_id: str | None = None
+    cognito_issuer: str | None = None
+    cognito_client_id: str | None = None
+    auth_required: bool = True
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -92,6 +95,23 @@ class Settings:
 
         stdio_args_value = os.getenv("SHERLOCK_MCP_STDIO_ARGS")
         headers_value = os.getenv("SHERLOCK_MCP_HTTP_HEADERS")
+
+        cognito_issuer = os.getenv("SHERLOCK_COGNITO_ISSUER")
+        cognito_client_id = os.getenv("SHERLOCK_COGNITO_CLIENT_ID")
+        auth_required_value = (
+            os.getenv("SHERLOCK_AUTH_REQUIRED", "true").strip().lower()
+        )
+        if auth_required_value not in {"true", "false"}:
+            raise ValueError("SHERLOCK_AUTH_REQUIRED must be 'true' or 'false'")
+        auth_required = auth_required_value == "true"
+        if bool(cognito_issuer) != bool(cognito_client_id):
+            raise ValueError(
+                "SHERLOCK_COGNITO_ISSUER and SHERLOCK_COGNITO_CLIENT_ID must be set together"
+            )
+        if auth_required and not cognito_issuer:
+            raise ValueError(
+                "SHERLOCK_COGNITO_ISSUER and SHERLOCK_COGNITO_CLIENT_ID are required when authentication is enabled"
+            )
 
         return cls(
             mcp_transport=transport,
@@ -110,6 +130,9 @@ class Settings:
             mcp_startup_timeout=int(os.getenv("SHERLOCK_MCP_STARTUP_TIMEOUT", "30")),
             agentcore_runtime_arn=os.getenv("SHERLOCK_AGENTCORE_RUNTIME_ARN"),
             phoenix_secret_id=os.getenv("SHERLOCK_PHOENIX_SECRET_ID"),
+            cognito_issuer=cognito_issuer.rstrip("/") if cognito_issuer else None,
+            cognito_client_id=cognito_client_id,
+            auth_required=auth_required,
         )
 
     def mcp_server_config(

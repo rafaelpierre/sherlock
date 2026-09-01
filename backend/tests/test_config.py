@@ -7,6 +7,7 @@ from sherlock.config import Settings
 
 def test_stdio_is_the_default_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SHERLOCK_MCP_TRANSPORT", raising=False)
+    monkeypatch.setenv("SHERLOCK_AUTH_REQUIRED", "false")
 
     config = Settings.from_environment().mcp_server_config()
 
@@ -17,6 +18,7 @@ def test_stdio_is_the_default_transport(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_streamable_http_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHERLOCK_AUTH_REQUIRED", "false")
     monkeypatch.setenv("SHERLOCK_MCP_TRANSPORT", "streamable-http")
     monkeypatch.setenv("SHERLOCK_MCP_URL", "https://mcp.internal.example/mcp")
     monkeypatch.setenv(
@@ -32,13 +34,30 @@ def test_streamable_http_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_invalid_transport_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHERLOCK_AUTH_REQUIRED", "false")
     monkeypatch.setenv("SHERLOCK_MCP_TRANSPORT", "sse")
 
     with pytest.raises(ValueError, match="SHERLOCK_MCP_TRANSPORT"):
         Settings.from_environment()
 
 
+def test_cognito_issuer_and_client_id_are_configured_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SHERLOCK_COGNITO_ISSUER", "https://issuer.example/pool")
+
+    with pytest.raises(ValueError, match="must be set together"):
+        Settings.from_environment()
+
+    monkeypatch.setenv("SHERLOCK_COGNITO_CLIENT_ID", "client-id")
+    settings = Settings.from_environment()
+
+    assert settings.cognito_issuer == "https://issuer.example/pool"
+    assert settings.cognito_client_id == "client-id"
+
+
 def test_agentcore_requires_a_runtime_arn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHERLOCK_AUTH_REQUIRED", "false")
     monkeypatch.setenv("SHERLOCK_MCP_TRANSPORT", "agentcore")
     settings = Settings.from_environment()
 
@@ -49,6 +68,7 @@ def test_agentcore_requires_a_runtime_arn(monkeypatch: pytest.MonkeyPatch) -> No
 def test_agentcore_client_uses_the_runtime_invocation_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("SHERLOCK_AUTH_REQUIRED", "false")
     monkeypatch.setenv("SHERLOCK_MCP_TRANSPORT", "agentcore")
     monkeypatch.setenv(
         "SHERLOCK_AGENTCORE_RUNTIME_ARN",
@@ -77,6 +97,7 @@ def test_agentcore_client_uses_the_runtime_invocation_endpoint(
 def test_stdio_args_must_be_a_json_string_array(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("SHERLOCK_AUTH_REQUIRED", "false")
     monkeypatch.setenv("SHERLOCK_MCP_STDIO_ARGS", '["run", 1]')
 
     with pytest.raises(ValueError, match="JSON array of strings"):

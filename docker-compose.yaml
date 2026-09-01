@@ -31,6 +31,9 @@ services:
       - AWS_SESSION_TOKEN
       - SHERLOCK_MCP_TRANSPORT=streamable-http
       - SHERLOCK_MCP_URL=http://mcp:8000/mcp
+      - SHERLOCK_AUTH_REQUIRED=false
+      - SHERLOCK_COGNITO_ISSUER
+      - SHERLOCK_COGNITO_CLIENT_ID
     volumes:
       - type: bind
         source: ${AWS_CONFIG_DIR:-~/.aws}
@@ -62,6 +65,9 @@ services:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:80"
     environment:
       BACKEND_URL: http://backend:8080
+      COGNITO_ISSUER: ${SHERLOCK_COGNITO_ISSUER:-}
+      COGNITO_CLIENT_ID: ${SHERLOCK_COGNITO_CLIENT_ID:-}
+      COGNITO_HOSTED_UI_DOMAIN: ${SHERLOCK_COGNITO_HOSTED_UI_DOMAIN:-}
     depends_on:
       backend:
         condition: service_healthy

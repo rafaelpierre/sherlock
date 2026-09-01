@@ -81,12 +81,17 @@ resource "aws_iam_role_policy" "backend_task" {
 locals {
   environment = concat(
     var.backend_url == null ? [] : [{ name = "BACKEND_URL", value = var.backend_url }],
+    var.cognito_issuer == null ? [] : [{ name = "COGNITO_ISSUER", value = var.cognito_issuer }],
+    var.cognito_client_id == null ? [] : [{ name = "COGNITO_CLIENT_ID", value = var.cognito_client_id }],
+    var.cognito_hosted_ui_domain == null ? [] : [{ name = "COGNITO_HOSTED_UI_DOMAIN", value = var.cognito_hosted_ui_domain }],
     var.create_agentcore_task_role ? [
       { name = "AWS_REGION", value = var.aws_region },
       { name = "AWS_DEFAULT_REGION", value = var.aws_region },
       { name = "SHERLOCK_MCP_TRANSPORT", value = "agentcore" },
       { name = "SHERLOCK_AGENTCORE_RUNTIME_ARN", value = var.agentcore_runtime_arn },
     ] : [],
+    var.cognito_issuer == null ? [] : [{ name = "SHERLOCK_COGNITO_ISSUER", value = var.cognito_issuer }],
+    var.cognito_client_id == null ? [] : [{ name = "SHERLOCK_COGNITO_CLIENT_ID", value = var.cognito_client_id }],
     var.phoenix_secret_id == null ? [] : [
       { name = "SHERLOCK_PHOENIX_SECRET_ID", value = var.phoenix_secret_id },
       { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "http/protobuf" },

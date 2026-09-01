@@ -71,3 +71,21 @@ variable "phoenix_secret_id" {
   default  = null
   nullable = true
 }
+
+variable "cognito_issuer" {
+  type     = string
+  default  = null
+  nullable = true
+}
+
+variable "cognito_client_id" {
+  type     = string
+  default  = null
+  nullable = true
+}
+
+variable "cognito_hosted_ui_domain" {
+  type     = string
+  default  = null
+  nullable = true
+}

@@ -6,8 +6,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
+from sherlock.api.auth import CognitoTokenVerifier
 from sherlock.api.routes import router
 from sherlock.chat import ChatAgentFactory
 from sherlock.config import Settings
@@ -23,6 +25,13 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Create application-scoped resources and close them on shutdown."""
 
     settings = Settings.from_environment()
+    application.state.auth_verifier = (
+        CognitoTokenVerifier(settings.cognito_issuer, settings.cognito_client_id)
+        if settings.auth_required
+        and settings.cognito_issuer
+        and settings.cognito_client_id
+        else None
+    )
     configure_tracing(settings)
     text2sql_service = create_text2sql_service(settings)
     rule_generation_service = create_rule_generation_service(settings)
@@ -57,6 +66,28 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(router)
+
+    @application.middleware("http")
+    async def require_cognito_access_token(request: Request, call_next):
+        """Protect product endpoints before request parsing or workflow creation."""
+
+        if request.url.path.startswith("/v1/") and request.url.path != "/v1/health":
+            verifier: CognitoTokenVerifier | None = getattr(
+                request.app.state, "auth_verifier", None
+            )
+            if verifier is not None:
+                try:
+                    request.state.auth_claims = await verifier.verify_authorization(
+                        request.headers.get("authorization")
+                    )
+                except HTTPException as exc:
+                    return JSONResponse(
+                        status_code=exc.status_code,
+                        content={"detail": exc.detail},
+                        headers=exc.headers,
+                    )
+        return await call_next(request)
+
     return application
 
 

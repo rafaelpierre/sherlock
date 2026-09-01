@@ -18,6 +18,22 @@ uv run backend-api
 The readiness endpoint is `GET http://localhost:8080/v1/health`. It reports API
 process readiness without invoking Bedrock or running an analytical query.
 
+## Authentication
+
+When both `SHERLOCK_COGNITO_ISSUER` and `SHERLOCK_COGNITO_CLIENT_ID` are set,
+all `/v1` product endpoints require a Cognito **access** token in an
+`Authorization: Bearer <token>` header. The backend validates the JWT's RS256
+signature against the issuer JWKS, issuer, expiry, `token_use`, and `client_id`
+before creating a workflow or parsing a product request. Missing or invalid
+tokens receive the safe `401` response `{"detail":"Authentication is required."}`
+with `WWW-Authenticate: Bearer`. `/v1/health` remains unauthenticated for
+platform health checks.
+
+Authentication is enabled by default. The issuer and client ID must be
+configured together whenever `SHERLOCK_AUTH_REQUIRED=true`. Local development
+must explicitly set `SHERLOCK_AUTH_REQUIRED=false`; deployed environments must
+supply both Cognito values and must not disable authentication.
+
 Submit a standalone analytics question directly to the Text2SQL service:
 
 ```bash
