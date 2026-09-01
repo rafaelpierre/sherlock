@@ -6,10 +6,6 @@ variable "aws_region" {
   type = string
 }
 
-variable "bedrock_model_id" {
-  type = string
-}
-
-variable "image_tag" {
+variable "image_uri" {
   type = string
 }

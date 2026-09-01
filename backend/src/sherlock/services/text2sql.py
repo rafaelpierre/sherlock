@@ -255,19 +255,7 @@ def create_text2sql_service(
 ) -> Text2SQLService:
     """Build the production Text2SQL service and its shared MCP connection."""
 
-    clients = MCPClient.load_servers(
-        {
-            "mcpServers": {
-                "fraud-analytics": settings.mcp_server_config(
-                    allowed_tools=GENERATOR_TOOLS
-                )
-            }
-        }
-    )
-    if len(clients) != 1:
-        raise RuntimeError("Expected exactly one enabled fraud analytics MCP server")
-
-    client = clients[0]
+    client = settings.mcp_client(allowed_tools=GENERATOR_TOOLS)
     owner = object()
     client.add_consumer(owner)
 

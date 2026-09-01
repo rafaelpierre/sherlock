@@ -112,3 +112,22 @@ resource "aws_iam_role_policy_attachment" "terraform_admin" {
   role       = aws_iam_role.terraform_github.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
+
+# Image repositories must exist before the deployment workflow can build and push
+# the first application revision. They deliberately live in bootstrap alongside
+# the CI identity and state bucket.
+resource "aws_ecr_repository" "application" {
+  for_each = toset(["frontend", "backend", "mcp"])
+
+  name                 = "${var.project_name}-${each.key}"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Project   = var.project_name
+    ManagedBy = "Terraform"
+  }
+}

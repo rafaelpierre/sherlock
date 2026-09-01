@@ -1,4 +1,4 @@
-name: AWS OIDC
+name: Deploy AWS PoC
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
   id-token: write
 
 jobs:
-  terraform:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,3 +24,36 @@ jobs:
 
       - name: Verify AWS identity
         run: aws sts get-caller-identity
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish multi-architecture images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --push --tag "$REGISTRY/sherlock-frontend:$IMAGE_TAG" frontend
+          docker buildx build --platform linux/amd64,linux/arm64 --push --tag "$REGISTRY/sherlock-backend:$IMAGE_TAG" backend
+          docker buildx build --platform linux/amd64,linux/arm64 --push --tag "$REGISTRY/sherlock-mcp:$IMAGE_TAG" mcp
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Initialize Terraform state
+        run: terraform -chdir=terraform init -input=false -backend-config='bucket=sherlock-terraform-state-041391475835' -backend-config='key=sherlock/poc.tfstate' -backend-config='region=eu-west-2' -backend-config='use_lockfile=true'
+
+      - name: Validate Terraform
+        run: terraform -chdir=terraform validate
+
+      - name: Apply infrastructure
+        run: terraform -chdir=terraform apply -input=false -auto-approve -var='project_name=sherlock' -var='image_tag=${{ github.sha }}'
+
+      - name: Smoke test the deployed browser path
+        run: |
+          FRONTEND_URL="$(terraform -chdir=terraform output -raw frontend_url)"
+          curl --fail --retry 12 --retry-delay 10 "$FRONTEND_URL/health"
+          curl --fail --retry 12 --retry-delay 10 "$FRONTEND_URL/v1/health"
