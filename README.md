@@ -38,11 +38,24 @@ docker compose up --build --wait
 Open <http://localhost:3000>. The local browser proxies `/v1` to the backend,
 which calls MCP on the private Compose network. Stop it with `docker compose down`.
 
-For direct development:
+For direct development, use two terminals from the repository root. The local
+backend deliberately disables Cognito because the Compose-only development setup
+does not provision an issuer or client ID.
+
+Terminal 1:
 
 ```bash
-cd backend && uv sync --locked --dev && uv run backend-api
-cd frontend && npm ci && npm run dev
+cd backend
+uv sync --locked --dev
+SHERLOCK_AUTH_REQUIRED=false uv run backend-api
+```
+
+Terminal 2:
+
+```bash
+cd frontend
+npm ci
+npm run dev
 ```
 
 Package-level operating guides:

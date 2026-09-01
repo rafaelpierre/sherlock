@@ -30,7 +30,7 @@ access.
 
 ```bash
 uv sync --locked --dev
-uv run backend-api
+SHERLOCK_AUTH_REQUIRED=false uv run backend-api
 ```
 
 Readiness is `GET http://localhost:8080/v1/health`; it does not call Bedrock.
@@ -67,6 +67,8 @@ and must not disable authentication; do not commit tokens or client secrets.
 | `POST /v1/chat` | Orchestrated FSM turn; returns JSON, or SSE when `Accept: text/event-stream` is requested. |
 | `POST /v1/rules/generate` | Generate then validate a candidate rule. |
 | `POST /v1/rules/refine` | Refine an explicit rule; invalid current rule is `422`. |
+| `POST /v1/rules/backtest` | Validate and replay an explicit candidate rule against historical data. |
+| `POST /v1/rules/compare` | Compare two explicit candidate rules using their historical metrics. |
 
 Chat SSE contains only `text_delta`, `tool_call`, `tool_result`, `complete`,
 and `error`. `complete` is authoritative for artifacts, metadata, and working
