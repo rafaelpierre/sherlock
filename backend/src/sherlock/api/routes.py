@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -262,16 +263,27 @@ def _sse(event: str, payload: BaseModel) -> str:
     return f"event: {event}\ndata: {data}\n\n"
 
 
+def _record_stream_failure(
+    outcome: SpanOutcome | None,
+    mark_failed: Callable[[], None] | None,
+    exception: BaseException,
+) -> None:
+    if outcome is not None:
+        outcome.fail(exception)
+    if mark_failed is not None:
+        mark_failed()
+
+
 async def _chat_event_stream(
     events: AsyncIterator[tuple[str, BaseModel]],
     outcome: SpanOutcome | None = None,
+    mark_failed: Callable[[], None] | None = None,
 ) -> AsyncIterator[str]:
     try:
         async for event, payload in events:
             yield _sse(event, payload)
     except MissingChatState as exc:
-        if outcome is not None:
-            outcome.fail(exc)
+        _record_stream_failure(outcome, mark_failed, exc)
         if "candidate_rule" in exc.missing_fields:
             message = "Create or select a candidate rule before running this activity."
         else:
@@ -280,8 +292,7 @@ async def _chat_event_stream(
             )
         yield _sse("error", ChatStreamError(message=message))
     except InvalidChatState as exc:
-        if outcome is not None:
-            outcome.fail(exc)
+        _record_stream_failure(outcome, mark_failed, exc)
         yield _sse(
             "error",
             ChatStreamError(
@@ -292,8 +303,7 @@ async def _chat_event_stream(
             ),
         )
     except ChatAgentError as exc:
-        if outcome is not None:
-            outcome.fail(exc)
+        _record_stream_failure(outcome, mark_failed, exc)
         yield _sse(
             "error",
             ChatStreamError(
@@ -307,30 +317,58 @@ async def _traced_chat_event_stream(
     history_messages: int,
     lease: WorkflowLease,
 ) -> AsyncIterator[str]:
-    """Keep the root span open for the full SSE turn, including cancellation."""
+    """Write completed producer events without putting response writes on its clock."""
+
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    producer = asyncio.create_task(
+        _produce_chat_events(events, history_messages, lease, queue)
+    )
+    try:
+        while (event := await queue.get()) is not None:
+            yield event
+    finally:
+        if not producer.done():
+            producer.cancel()
+        await asyncio.gather(producer, return_exceptions=True)
+
+
+async def _produce_chat_events(
+    events: AsyncIterator[tuple[str, BaseModel]],
+    history_messages: int,
+    lease: WorkflowLease,
+    queue: asyncio.Queue[str | None],
+) -> None:
+    """Run the deadline-bound workflow independently from ASGI response writes."""
 
     outcome = SpanOutcome()
-    async with (
-        span(
-            CHAT_TURN_SPAN,
-            attributes={"sherlock.chat.history_messages": history_messages},
-            kind=SpanKind.SERVER,
-            outcome=outcome,
-        ),
-        span("sherlock.chat.agent", outcome=outcome),
-    ):
-        try:
-            async with lease:
-                async for event in _chat_event_stream(events, outcome):
-                    yield event
-        except WorkflowDeadlineExceeded as exc:
-            outcome.fail(exc)
-            yield _sse(
-                "error",
-                ChatStreamError(
-                    message="Sherlock could not complete the request in time. Please try again."
-                ),
-            )
+    try:
+        async with (
+            span(
+                CHAT_TURN_SPAN,
+                attributes={"sherlock.chat.history_messages": history_messages},
+                kind=SpanKind.SERVER,
+                outcome=outcome,
+            ),
+            span("sherlock.chat.agent", outcome=outcome),
+        ):
+            try:
+                async with lease:
+                    async for event in _chat_event_stream(
+                        events, outcome, lease.mark_failed
+                    ):
+                        queue.put_nowait(event)
+            except WorkflowDeadlineExceeded as exc:
+                outcome.fail(exc)
+                queue.put_nowait(
+                    _sse(
+                        "error",
+                        ChatStreamError(
+                            message="Sherlock could not complete the request in time. Please try again."
+                        ),
+                    )
+                )
+    finally:
+        queue.put_nowait(None)
 
 
 @router.post("/rules/generate", response_model=RuleGenerateResponse)

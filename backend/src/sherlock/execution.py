@@ -76,6 +76,7 @@ class WorkflowLease(AbstractAsyncContextManager[None]):
         self._context_token: Token[WorkflowLease | None] | None = None
         self._blocking_provider_tasks: set[asyncio.Task[Any]] = set()
         self._released = False
+        self._handled_failure = False
 
     async def __aenter__(self) -> None:
         self._context_token = _active_workflow_lease.set(self)
@@ -86,6 +87,11 @@ class WorkflowLease(AbstractAsyncContextManager[None]):
         """Keep admission capacity while an uncancellable provider thread drains."""
 
         self._blocking_provider_tasks.add(task)
+
+    def mark_failed(self) -> None:
+        """Record a workflow failure that was translated into a safe response."""
+
+        self._handled_failure = True
 
     async def __aexit__(
         self,
@@ -103,7 +109,7 @@ class WorkflowLease(AbstractAsyncContextManager[None]):
         else:
             if isinstance(exc, asyncio.CancelledError):
                 outcome = "cancelled"
-            elif exc is not None:
+            elif exc is not None or self._handled_failure:
                 outcome = "failed"
         finally:
             if self._context_token is not None:

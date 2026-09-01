@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sherlock.api.chat_models import ChatTextDelta
 from sherlock.api.routes import _traced_chat_event_stream, query
 from sherlock.api.schemas import QueryRequest
+from sherlock.chat import ChatAgentError
 from sherlock.execution import (
     ExecutionLimits,
     WorkflowController,
@@ -186,3 +187,43 @@ def test_open_sse_stream_reports_a_safe_deadline_error() -> None:
     assert len(emitted) == 1
     assert "event: error" in emitted[0]
     assert "could not complete the request in time" in emitted[0]
+
+
+def test_sse_deadline_does_not_depend_on_response_writes() -> None:
+    async def events():
+        yield "text_delta", ChatTextDelta(delta="first", segment="content")
+        await asyncio.sleep(0.02)
+        yield "text_delta", ChatTextDelta(delta="not delivered", segment="content")
+
+    async def run() -> list[str]:
+        controller = WorkflowController(ExecutionLimits(deadline_seconds=0.001))
+        lease = await controller.admit(WorkflowKind.CHAT)
+        stream = _traced_chat_event_stream(events(), 0, lease)
+        first = await anext(stream)
+        await asyncio.sleep(0.02)  # Simulate an ASGI response write under backpressure.
+        remaining = [event async for event in stream]
+        return [first, *remaining]
+
+    emitted = asyncio.run(run())
+
+    assert "first" in emitted[0]
+    assert "event: error" in emitted[1]
+
+
+def test_handled_sse_error_has_a_failed_telemetry_outcome(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def events():
+        raise ChatAgentError("provider unavailable")
+        yield  # pragma: no cover - makes this an async generator
+
+    async def run() -> list[str]:
+        controller = WorkflowController(ExecutionLimits())
+        lease = await controller.admit(WorkflowKind.CHAT)
+        return [event async for event in _traced_chat_event_stream(events(), 0, lease)]
+
+    with caplog.at_level(logging.INFO, logger="sherlock.execution"):
+        emitted = asyncio.run(run())
+
+    assert "event: error" in emitted[0]
+    assert "kind=chat outcome=failed elapsed_ms=" in caplog.text
