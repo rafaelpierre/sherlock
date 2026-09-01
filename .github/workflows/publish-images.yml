@@ -1,0 +1,95 @@
+name: Publish container images
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "mcp/**"
+      - ".github/workflows/publish-images.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        service: [frontend, backend, mcp]
+        architecture: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.service }} for linux/${{ matrix.architecture }}
+        run: docker buildx build --platform linux/${{ matrix.architecture }} --output type=oci,dest=/tmp/sherlock-${{ matrix.service }}-${{ matrix.architecture }}.tar ${{ matrix.service }}
+
+  publish-platform:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        service: [frontend, backend, mcp]
+        architecture: [amd64, arm64]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::041391475835:role/terraform-github
+          aws-region: eu-west-2
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Publish ${{ matrix.service }} for linux/${{ matrix.architecture }}
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if aws ecr describe-images --repository-name "sherlock-${{ matrix.service }}" --image-ids imageTag="$IMAGE_TAG-${{ matrix.architecture }}" >/dev/null 2>&1; then
+            echo "sherlock-${{ matrix.service }}:$IMAGE_TAG-${{ matrix.architecture }} already exists; leaving immutable image unchanged"
+            exit 0
+          fi
+          docker buildx build --platform linux/${{ matrix.architecture }} --push --tag "$REGISTRY/sherlock-${{ matrix.service }}:$IMAGE_TAG-${{ matrix.architecture }}" "${{ matrix.service }}"
+
+  publish-manifest:
+    if: github.event_name == 'push'
+    needs: publish-platform
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        service: [frontend, backend, mcp]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::041391475835:role/terraform-github
+          aws-region: eu-west-2
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Publish ${{ matrix.service }} multi-architecture manifest
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if aws ecr describe-images --repository-name "sherlock-${{ matrix.service }}" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "sherlock-${{ matrix.service }}:$IMAGE_TAG already exists; leaving immutable image unchanged"
+            exit 0
+          fi
+          docker buildx imagetools create --tag "$REGISTRY/sherlock-${{ matrix.service }}:$IMAGE_TAG" "$REGISTRY/sherlock-${{ matrix.service }}:$IMAGE_TAG-amd64" "$REGISTRY/sherlock-${{ matrix.service }}:$IMAGE_TAG-arm64"
