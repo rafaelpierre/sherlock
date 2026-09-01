@@ -68,7 +68,6 @@ from sherlock.telemetry import CHAT_TURN_SPAN, SpanOutcome, span
 router = APIRouter(prefix="/v1")
 MAX_STREAM_BUFFERED_EVENTS = 20
 MAX_STREAM_BUFFERED_BYTES = 256_000
-MAX_STREAM_BACKPRESSURE_SECONDS = 0.5
 
 
 class StreamBufferFull(RuntimeError):
@@ -85,16 +84,12 @@ class StreamBuffer:
         self.terminal_event: str | None = None
 
     async def put(self, event: str) -> None:
-        """Append an event while allowing a bounded interval for writer progress."""
+        """Append an event, applying backpressure while the bounded queue is full."""
 
         event_bytes = len(event.encode("utf-8"))
         if self._buffered_bytes + event_bytes > MAX_STREAM_BUFFERED_BYTES:
             raise StreamBufferFull
-        try:
-            async with asyncio.timeout(MAX_STREAM_BACKPRESSURE_SECONDS):
-                await self._events.put(event)
-        except TimeoutError as exc:
-            raise StreamBufferFull from exc
+        await self._events.put(event)
         self._buffered_bytes += event_bytes
 
     def close(self, terminal_event: str | None = None) -> None:
