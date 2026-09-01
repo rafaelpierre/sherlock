@@ -68,6 +68,9 @@ def test_cli_runs_offline_writes_valid_report_and_prints_summary(
     assert report.metadata.started_at == NOW
     assert report.metadata.dataset_revision == "fixture-v1"
     assert report.metadata.mode == "fixture"
+    assert report.metadata.configuration["rule_generation_comparison"] == (
+        "reference-predicate-exact-transaction-ids-v1"
+    )
     assert report.summary.passed == 1
     assert "Cases: 1 | Passed: 1" in capsys.readouterr().out
 
@@ -133,3 +136,55 @@ def test_documented_report_schema_matches_the_runtime_contract() -> None:
     }
 
     assert documented == generated
+
+
+def test_committed_v1_report_remains_readable_with_default_semantic_metrics() -> None:
+    report_path = (
+        Path(__file__).parents[2] / "evals" / "results" / "runner-smoke-2026-08-30.json"
+    )
+
+    report = EvaluationReport.model_validate_json(
+        report_path.read_text(encoding="utf-8")
+    )
+
+    assert report.schema_version == 1
+    assert report.summary.validation_passed == 0
+    assert report.summary.execution_passed == 0
+    assert report.summary.semantic_correct == 0
+
+
+def test_committed_rule_generation_golden_suite_runs_offline(tmp_path) -> None:
+    output = tmp_path / "rule-generation.json"
+    fixtures = Path(__file__).parents[2] / "evals" / "cases"
+
+    exit_code = run_cli(
+        [
+            "--fixtures",
+            str(fixtures),
+            "--suite",
+            "rule-generation-golden",
+            "--output",
+            str(output),
+            "--dataset-revision",
+            "fixture-v1",
+        ],
+        now=NOW,
+    )
+
+    report = EvaluationReport.model_validate_json(output.read_text(encoding="utf-8"))
+    assert exit_code == EXIT_SUCCESS
+    assert report.summary.model_dump(
+        include={
+            "total",
+            "passed",
+            "validation_passed",
+            "execution_passed",
+            "semantic_correct",
+        }
+    ) == {
+        "total": 10,
+        "passed": 10,
+        "validation_passed": 10,
+        "execution_passed": 10,
+        "semantic_correct": 10,
+    }

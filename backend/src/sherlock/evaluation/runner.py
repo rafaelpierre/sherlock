@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import Any
 
 from sherlock.evaluation.models import (
+    CaseStatus,
     EvaluationCase,
     EvaluationCaseResult,
     EvaluationReport,
@@ -37,7 +38,7 @@ class EvaluationRunner:
             for case in suite.cases:
                 results.append(await self._run_case(suite, case))
         return EvaluationReport(
-            schema_version=1,
+            schema_version=2,
             metadata=metadata,
             results=results,
             summary=_summarize(results),
@@ -49,7 +50,12 @@ class EvaluationRunner:
         started = self._clock()
         try:
             output = await self._service.execute(suite.kind, case)
-            status = "passed" if _contains_expected(output, case.expected) else "failed"
+            (
+                status,
+                validation_passed,
+                execution_passed,
+                semantic_correct,
+            ) = _evaluate_case(suite, case, output)
             return EvaluationCaseResult(
                 suite=suite.name,
                 case_id=case.id,
@@ -57,6 +63,9 @@ class EvaluationRunner:
                 latency_ms=_elapsed_ms(started, self._clock()),
                 repair_count=_repair_count(output),
                 output=output,
+                validation_passed=validation_passed,
+                execution_passed=execution_passed,
+                semantic_correct=semantic_correct,
             )
         except Exception as exc:  # noqa: BLE001 - a case failure must not abort its suite
             return EvaluationCaseResult(
@@ -89,6 +98,56 @@ def _contains_expected(actual: Any, expected: Any) -> bool:
     return actual == expected
 
 
+def _evaluate_case(
+    suite: EvaluationSuite, case: EvaluationCase, output: dict[str, Any]
+) -> tuple[CaseStatus, bool | None, bool | None, bool | None]:
+    if suite.kind != "rule_generation":
+        return (
+            "passed" if _contains_expected(output, case.expected) else "failed",
+            None,
+            None,
+            None,
+        )
+
+    assert case.rule_oracle is not None
+    validation_passed = output.get("valid") is True
+    comparison = output.get("transaction_id_comparison")
+    execution_passed = (
+        validation_passed
+        and isinstance(comparison, dict)
+        and all(
+            isinstance(comparison.get(key), int)
+            and not isinstance(comparison.get(key), bool)
+            and comparison[key] >= 0
+            for key in (
+                "candidate_count",
+                "reference_count",
+                "candidate_only_count",
+                "reference_only_count",
+            )
+        )
+    )
+    semantic_correct = (
+        comparison["candidate_only_count"] == 0
+        and comparison["reference_only_count"] == 0
+        and comparison["reference_count"] >= case.rule_oracle.minimum_reference_matches
+        if execution_passed
+        else False
+    )
+    passed = (
+        _contains_expected(output, case.expected)
+        and validation_passed
+        and execution_passed
+        and semantic_correct
+    )
+    return (
+        "passed" if passed else "failed",
+        validation_passed,
+        execution_passed,
+        semantic_correct,
+    )
+
+
 def _repair_count(output: dict[str, Any]) -> int:
     count = output.get("repair_count")
     if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
@@ -114,4 +173,10 @@ def _summarize(results: list[EvaluationCaseResult]) -> EvaluationSummary:
         total_latency_ms=round(sum(result.latency_ms for result in results), 3),
         repair_count=sum(result.repair_count for result in results),
         repair_rate=repaired / len(completed) if completed else 0.0,
+        validation_passed=sum(result.validation_passed is True for result in results),
+        execution_passed=sum(result.execution_passed is True for result in results),
+        semantic_correct=sum(result.semantic_correct is True for result in results),
+        semantic_evaluated=sum(
+            result.semantic_correct is not None for result in results
+        ),
     )

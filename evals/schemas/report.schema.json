@@ -37,6 +37,21 @@
           "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
           "title": "Error"
+        },
+        "validation_passed": {
+          "anyOf": [{"type": "boolean"}, {"type": "null"}],
+          "default": null,
+          "title": "Validation Passed"
+        },
+        "execution_passed": {
+          "anyOf": [{"type": "boolean"}, {"type": "null"}],
+          "default": null,
+          "title": "Execution Passed"
+        },
+        "semantic_correct": {
+          "anyOf": [{"type": "boolean"}, {"type": "null"}],
+          "default": null,
+          "title": "Semantic Correct"
         }
       },
       "required": [
@@ -72,6 +87,30 @@
           "minimum": 0,
           "title": "Repair Rate",
           "type": "number"
+        },
+        "validation_passed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Validation Passed",
+          "type": "integer"
+        },
+        "execution_passed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Execution Passed",
+          "type": "integer"
+        },
+        "semantic_correct": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Semantic Correct",
+          "type": "integer"
+        },
+        "semantic_evaluated": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Semantic Evaluated",
+          "type": "integer"
         }
       },
       "required": [
@@ -148,7 +187,7 @@
   "description": "Stable top-level schema for persisted evaluation results.",
   "properties": {
     "schema_version": {
-      "const": 1,
+      "enum": [1, 2],
       "title": "Schema Version",
       "type": "integer"
     },
