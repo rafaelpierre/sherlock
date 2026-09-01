@@ -222,20 +222,29 @@ whose service build context changed. It pushes that service's immutable,
 multi-architecture image under the merge commit SHA. Pull requests build-test
 both target architectures for only the affected service and never write to ECR.
 Each successful publication uploads a 90-day `image-release.json` artifact with
-the service name, source commit, image tag, and manifest digest. The artifact is
-for traceability only; its expiry does not affect deployment.
+the service name, source commit, image tag, and manifest digest. The deployment
+workflow uses these artifacts to select immutable releases; their expiry does
+not affect images already deployed to ECS or AgentCore.
 
-To deploy, trigger **Deploy AWS PoC** manually and provide the three explicit
-tags: `frontend_image_tag`, `backend_image_tag`, and `mcp_image_tag`. Tags may
-come from different releases, allowing a deliberately mixed-version deployment.
-Each must be a lowercase 40-character commit SHA from the corresponding service
-publication. The workflow verifies that every selected tag exists in its ECR
-repository and is a multi-architecture manifest before Terraform runs; missing,
-malformed, or architecture-specific tags fail without substituting another
-image. It then applies Terraform and calls the public frontend `/health` and
-proxied `/v1/health` endpoints. It never rebuilds, pushes, or retags an image.
-Its state bucket and account are intentionally fixed to this PoC account
-(`041391475835`) and region (`eu-west-2`).
+To deploy the normal release set, trigger **Deploy AWS PoC** manually and leave
+the three `*_image_tag` override inputs empty. The workflow retrieves the most
+recent unexpired frontend, backend, and MCP release artifacts and deploys the
+image tags recorded in their metadata. This works even though each service is
+published independently on the merge that changes it.
+
+For a deliberate mixed-version deployment or rollback, set one or more explicit
+`*_image_tag` overrides. An override must be a lowercase 40-character commit
+SHA from the corresponding service publication; services without an override
+continue to resolve from their latest release artifact. Before Terraform runs,
+the workflow validates release metadata for artifact-resolved images and
+verifies every selected tag exists in its corresponding ECR repository as a
+multi-architecture manifest. Missing or malformed artifacts, missing images, and
+architecture-specific tags fail without substituting another image. The workflow
+logs the selected release and final tag/digest for each service, then applies
+Terraform and calls the public frontend `/health` and proxied `/v1/health`
+endpoints. It never rebuilds, pushes, or retags an image. Its state bucket and
+account are intentionally fixed to this PoC account (`041391475835`) and region
+(`eu-west-2`).
 
 The initial deployment usually takes several minutes because ECS Express Mode
 creates its managed ingress resources and AgentCore creates a runtime revision.
