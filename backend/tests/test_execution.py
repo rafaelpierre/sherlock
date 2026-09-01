@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import cast
+
+import pytest
+from fastapi import HTTPException
+
+from sherlock.api.chat_models import ChatTextDelta
+from sherlock.api.routes import _traced_chat_event_stream, query
+from sherlock.api.schemas import QueryRequest
+from sherlock.execution import (
+    ExecutionLimits,
+    WorkflowController,
+    WorkflowDeadlineExceeded,
+    WorkflowKind,
+    WorkflowOverloaded,
+)
+from sherlock.services.text2sql import Text2SQLService
+
+
+def test_deadline_covers_multiple_repair_steps() -> None:
+    async def run() -> None:
+        controller = WorkflowController(ExecutionLimits(deadline_seconds=0.01))
+        with pytest.raises(WorkflowDeadlineExceeded):
+            async with controller.workflow(WorkflowKind.QUERY):
+                await asyncio.sleep(0.006)  # generation
+                await asyncio.sleep(0.006)  # execution/repair exceeds turn budget
+
+    asyncio.run(run())
+
+
+def test_overload_rejects_without_waiting_and_releases_partial_permits() -> None:
+    async def run() -> None:
+        controller = WorkflowController(
+            ExecutionLimits(model_in_flight_limit=1, mcp_in_flight_limit=1)
+        )
+        async with controller.workflow(WorkflowKind.QUERY):
+            with pytest.raises(WorkflowOverloaded):
+                await controller.admit(WorkflowKind.QUERY)
+        async with controller.workflow(WorkflowKind.QUERY):
+            pass
+
+    asyncio.run(run())
+
+
+def test_cancellation_releases_permits_for_the_next_workflow() -> None:
+    async def run() -> None:
+        controller = WorkflowController(
+            ExecutionLimits(model_in_flight_limit=1, mcp_in_flight_limit=1)
+        )
+        entered = asyncio.Event()
+
+        async def blocked() -> None:
+            async with controller.workflow(WorkflowKind.QUERY):
+                entered.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(blocked())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        async with controller.workflow(WorkflowKind.QUERY):
+            pass
+
+    asyncio.run(run())
+
+
+def test_safe_workflow_telemetry_has_no_request_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def run() -> None:
+        controller = WorkflowController(ExecutionLimits())
+        async with controller.workflow(WorkflowKind.BACKTEST):
+            pass
+
+    with caplog.at_level(logging.INFO, logger="sherlock.execution"):
+        asyncio.run(run())
+
+    assert "kind=backtest outcome=ok elapsed_ms=" in caplog.text
+
+
+def test_query_timeout_has_a_safe_gateway_timeout_contract() -> None:
+    class SlowService:
+        async def query(self, question: str) -> dict[str, object]:
+            await asyncio.sleep(0.02)
+            return {}
+
+    async def run() -> None:
+        controller = WorkflowController(ExecutionLimits(deadline_seconds=0.001))
+        with pytest.raises(HTTPException) as error:
+            await query(
+                QueryRequest(question="Count transactions"),
+                cast(Text2SQLService, SlowService()),
+                controller,
+            )
+        assert error.value.status_code == 504
+        assert error.value.detail == (
+            "Sherlock could not complete the request in time. Please try again."
+        )
+
+    asyncio.run(run())
+
+
+def test_open_sse_stream_reports_a_safe_deadline_error() -> None:
+    async def events():
+        await asyncio.sleep(0.02)
+        yield "text_delta", ChatTextDelta(delta="not delivered", segment="content")
+
+    async def run() -> list[str]:
+        controller = WorkflowController(ExecutionLimits(deadline_seconds=0.001))
+        lease = await controller.admit(WorkflowKind.CHAT)
+        return [event async for event in _traced_chat_event_stream(events(), 0, lease)]
+
+    emitted = asyncio.run(run())
+
+    assert len(emitted) == 1
+    assert "event: error" in emitted[0]
+    assert "could not complete the request in time" in emitted[0]

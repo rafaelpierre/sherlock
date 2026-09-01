@@ -35,6 +35,13 @@ from sherlock.chat import (
     InvalidChatState,
     MissingChatState,
 )
+from sherlock.execution import (
+    WorkflowController,
+    WorkflowDeadlineExceeded,
+    WorkflowKind,
+    WorkflowLease,
+    WorkflowOverloaded,
+)
 from sherlock.services.backtest import (
     BacktestError,
     BacktestService,
@@ -126,6 +133,32 @@ ChatAgentFactoryDependency = Annotated[
 ]
 
 
+def get_workflow_controller(request: Request) -> WorkflowController:
+    """Return the application-scoped per-worker workflow admission controller."""
+
+    return request.app.state.workflow_controller
+
+
+WorkflowControllerDependency = Annotated[
+    WorkflowController, Depends(get_workflow_controller)
+]
+
+
+def _workflow_error(
+    exception: WorkflowOverloaded | WorkflowDeadlineExceeded,
+) -> HTTPException:
+    if isinstance(exception, WorkflowOverloaded):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sherlock is busy. Please try again shortly.",
+            headers={"Retry-After": "1"},
+        )
+    return HTTPException(
+        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+        detail="Sherlock could not complete the request in time. Please try again.",
+    )
+
+
 @router.get("/health")
 async def health() -> dict[str, str]:
     """Report API readiness without invoking analytical dependencies."""
@@ -137,11 +170,15 @@ async def health() -> dict[str, str]:
 async def query(
     request: QueryRequest,
     service: Text2SQLDependency,
+    controller: WorkflowControllerDependency,
 ) -> QueryResponse:
     """Translate a natural-language question to SQL and execute it."""
 
     try:
-        result = await service.query(request.question)
+        async with controller.workflow(WorkflowKind.QUERY):
+            result = await service.query(request.question)
+    except (WorkflowOverloaded, WorkflowDeadlineExceeded) as exc:
+        raise _workflow_error(exc) from exc
     except Text2SQLError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -155,14 +192,19 @@ async def chat(
     request: ChatRequest,
     http_request: Request,
     factory: ChatAgentFactoryDependency,
+    controller: WorkflowControllerDependency,
 ) -> ChatResponse | StreamingResponse:
     """Route one stateless conversational turn through a fresh ChatAgent."""
 
     agent = factory.create(request.history, request.working_state)
     if _accepts_event_stream(http_request.headers.get("accept", "")):
+        try:
+            lease = await controller.admit(WorkflowKind.CHAT)
+        except WorkflowOverloaded as exc:
+            raise _workflow_error(exc) from exc
         return StreamingResponse(
             _traced_chat_event_stream(
-                agent.stream(request.message), len(request.history)
+                agent.stream(request.message), len(request.history), lease
             ),
             media_type="text/event-stream",
             headers={
@@ -172,6 +214,7 @@ async def chat(
         )
     try:
         async with (
+            controller.workflow(WorkflowKind.CHAT),
             span(
                 CHAT_TURN_SPAN,
                 attributes={"sherlock.chat.history_messages": len(request.history)},
@@ -180,6 +223,8 @@ async def chat(
             span("sherlock.chat.agent"),
         ):
             return await agent.respond(request.message)
+    except (WorkflowOverloaded, WorkflowDeadlineExceeded) as exc:
+        raise _workflow_error(exc) from exc
     except MissingChatState as exc:
         detail = ChatStateErrorResponse(
             code="MISSING_WORKING_STATE",
@@ -258,33 +303,49 @@ async def _chat_event_stream(
 
 
 async def _traced_chat_event_stream(
-    events: AsyncIterator[tuple[str, BaseModel]], history_messages: int
+    events: AsyncIterator[tuple[str, BaseModel]],
+    history_messages: int,
+    lease: WorkflowLease,
 ) -> AsyncIterator[str]:
     """Keep the root span open for the full SSE turn, including cancellation."""
 
     outcome = SpanOutcome()
-    async with (
-        span(
-            CHAT_TURN_SPAN,
-            attributes={"sherlock.chat.history_messages": history_messages},
-            kind=SpanKind.SERVER,
-            outcome=outcome,
-        ),
-        span("sherlock.chat.agent", outcome=outcome),
-    ):
-        async for event in _chat_event_stream(events, outcome):
-            yield event
+    try:
+        async with (
+            lease,
+            span(
+                CHAT_TURN_SPAN,
+                attributes={"sherlock.chat.history_messages": history_messages},
+                kind=SpanKind.SERVER,
+                outcome=outcome,
+            ),
+            span("sherlock.chat.agent", outcome=outcome),
+        ):
+            async for event in _chat_event_stream(events, outcome):
+                yield event
+    except WorkflowDeadlineExceeded as exc:
+        outcome.fail(exc)
+        yield _sse(
+            "error",
+            ChatStreamError(
+                message="Sherlock could not complete the request in time. Please try again."
+            ),
+        )
 
 
 @router.post("/rules/generate", response_model=RuleGenerateResponse)
 async def generate_rule(
     request: RuleGenerateRequest,
     service: RuleGenerationDependency,
+    controller: WorkflowControllerDependency,
 ) -> RuleGenerateResponse:
     """Generate and deterministically validate a candidate fraud rule."""
 
     try:
-        result = await service.generate(request.instruction)
+        async with controller.workflow(WorkflowKind.RULE_GENERATION):
+            result = await service.generate(request.instruction)
+    except (WorkflowOverloaded, WorkflowDeadlineExceeded) as exc:
+        raise _workflow_error(exc) from exc
     except (RuleGenerationError, RuntimeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -297,11 +358,15 @@ async def generate_rule(
 async def refine_rule(
     request: RuleRefineRequest,
     service: RuleGenerationDependency,
+    controller: WorkflowControllerDependency,
 ) -> RuleRefineResponse:
     """Apply a contextual modification to an explicit candidate rule."""
 
     try:
-        result = await service.refine(request.rule, request.instruction)
+        async with controller.workflow(WorkflowKind.RULE_GENERATION):
+            result = await service.refine(request.rule, request.instruction)
+    except (WorkflowOverloaded, WorkflowDeadlineExceeded) as exc:
+        raise _workflow_error(exc) from exc
     except InvalidCurrentRule as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -319,11 +384,15 @@ async def refine_rule(
 async def backtest_rule(
     request: RuleRequest,
     service: BacktestDependency,
+    controller: WorkflowControllerDependency,
 ) -> BacktestResponse:
     """Replay a candidate rule against historical transactions."""
 
     try:
-        result = await service.backtest(request.rule)
+        async with controller.workflow(WorkflowKind.BACKTEST):
+            result = await service.backtest(request.rule)
+    except (WorkflowOverloaded, WorkflowDeadlineExceeded) as exc:
+        raise _workflow_error(exc) from exc
     except InvalidBacktestRule as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -341,11 +410,15 @@ async def backtest_rule(
 async def compare_rules(
     request: RuleComparisonRequest,
     service: RuleComparisonDependency,
+    controller: WorkflowControllerDependency,
 ) -> RuleComparisonResponse:
     """Compare current and previous rules using deterministic backtests."""
 
     try:
-        result = await service.compare(request.current_rule, request.previous_rule)
+        async with controller.workflow(WorkflowKind.COMPARISON):
+            result = await service.compare(request.current_rule, request.previous_rule)
+    except (WorkflowOverloaded, WorkflowDeadlineExceeded) as exc:
+        raise _workflow_error(exc) from exc
     except InvalidComparisonRule as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
