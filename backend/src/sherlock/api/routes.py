@@ -66,7 +66,7 @@ from sherlock.services.text2sql import (
 from sherlock.telemetry import CHAT_TURN_SPAN, SpanOutcome, span
 
 router = APIRouter(prefix="/v1")
-MAX_STREAM_BUFFERED_EVENTS = 8
+MAX_STREAM_BUFFERED_EVENTS = 20
 MAX_STREAM_BUFFERED_BYTES = 256_000
 MAX_STREAM_BACKPRESSURE_SECONDS = 0.5
 
