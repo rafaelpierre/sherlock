@@ -125,6 +125,7 @@ jobs:
           set -euo pipefail
           if FRONTEND_URL="$(terraform -chdir=terraform output -raw frontend_url 2>/dev/null)"; then
             echo "The existing frontend endpoint will be retained: ${FRONTEND_URL}"
+            echo "existing_stack=true" >> "$GITHUB_OUTPUT"
           else
             terraform -chdir=terraform apply -input=false -auto-approve \
               -var='project_name=sherlock' \
@@ -132,8 +133,50 @@ jobs:
               -var='backend_image_tag=${{ steps.releases.outputs.backend_image_tag }}' \
               -var='mcp_image_tag=${{ steps.releases.outputs.mcp_image_tag }}'
             FRONTEND_URL="$(terraform -chdir=terraform output -raw frontend_url)"
+            echo "existing_stack=false" >> "$GITHUB_OUTPUT"
           fi
           echo "frontend_callback_url=${FRONTEND_URL%/}/" >> "$GITHUB_OUTPUT"
+
+      - name: Gate backend promotion on AgentCore MCP tools
+        if: steps.bootstrap.outputs.existing_stack == 'true'
+        env:
+          FRONTEND_IMAGE_TAG: ${{ steps.releases.outputs.frontend_image_tag }}
+          BACKEND_IMAGE_TAG: ${{ steps.releases.outputs.backend_image_tag }}
+          MCP_IMAGE_TAG: ${{ steps.releases.outputs.mcp_image_tag }}
+        run: |
+          set -euo pipefail
+
+          current_mcp_image_uri="$(terraform -chdir=terraform show -json | jq -r '
+            .. | objects
+            | select(.address == "module.agentcore.aws_bedrockagentcore_agent_runtime.agent")
+            | .values.agent_runtime_artifact[0].container_configuration[0].container_uri
+          ' | head -n 1)"
+          current_mcp_image_tag="${current_mcp_image_uri##*:}"
+          if ! [[ "$current_mcp_image_tag" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to identify the current immutable AgentCore MCP image tag for rollback." >&2
+            exit 1
+          fi
+
+          rollback_mcp() {
+            echo "AgentCore MCP smoke test failed; restoring the last known-good MCP runtime revision." >&2
+            terraform -chdir=terraform apply -input=false -auto-approve \
+              -target=module.agentcore \
+              -var='project_name=sherlock' \
+              -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+              -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+              -var="mcp_image_tag=${current_mcp_image_tag}"
+          }
+          trap rollback_mcp ERR
+
+          terraform -chdir=terraform apply -input=false -auto-approve \
+            -target=module.agentcore \
+            -var='project_name=sherlock' \
+            -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+            -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+            -var="mcp_image_tag=${MCP_IMAGE_TAG}"
+          python3 .github/scripts/agentcore_mcp_smoke_test.py \
+            --runtime-arn "$(terraform -chdir=terraform output -raw agent_runtime_arn)"
+          trap - ERR
 
       - name: Configure Cognito and authenticated infrastructure
         env:
