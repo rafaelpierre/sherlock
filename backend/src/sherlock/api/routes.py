@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 
 from sherlock.api.chat_models import (
@@ -49,6 +50,7 @@ from sherlock.services.rule_generation import (
     RuleGenerationService,
 )
 from sherlock.services.text2sql import Text2SQLError, Text2SQLService
+from sherlock.telemetry import CHAT_TURN_SPAN, span
 
 router = APIRouter(prefix="/v1")
 
@@ -159,7 +161,9 @@ async def chat(
     agent = factory.create(request.history, request.working_state)
     if _accepts_event_stream(http_request.headers.get("accept", "")):
         return StreamingResponse(
-            _chat_event_stream(agent.stream(request.message)),
+            _traced_chat_event_stream(
+                agent.stream(request.message), len(request.history)
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -167,7 +171,15 @@ async def chat(
             },
         )
     try:
-        return await agent.respond(request.message)
+        async with (
+            span(
+                CHAT_TURN_SPAN,
+                attributes={"sherlock.chat.history_messages": len(request.history)},
+                kind=SpanKind.SERVER,
+            ),
+            span("sherlock.chat.agent"),
+        ):
+            return await agent.respond(request.message)
     except MissingChatState as exc:
         detail = ChatStateErrorResponse(
             code="MISSING_WORKING_STATE",
@@ -236,6 +248,23 @@ async def _chat_event_stream(
                 message="Sherlock could not complete the request. Please try again."
             ),
         )
+
+
+async def _traced_chat_event_stream(
+    events: AsyncIterator[tuple[str, BaseModel]], history_messages: int
+) -> AsyncIterator[str]:
+    """Keep the root span open for the full SSE turn, including cancellation."""
+
+    async with (
+        span(
+            CHAT_TURN_SPAN,
+            attributes={"sherlock.chat.history_messages": history_messages},
+            kind=SpanKind.SERVER,
+        ),
+        span("sherlock.chat.agent"),
+    ):
+        async for event in _chat_event_stream(events):
+            yield event
 
 
 @router.post("/rules/generate", response_model=RuleGenerateResponse)

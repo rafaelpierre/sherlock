@@ -49,3 +49,14 @@ variable "agentcore_runtime_arn" {
   default  = null
   nullable = true
 }
+
+variable "runtime_secret_arns" {
+  type    = list(string)
+  default = []
+}
+
+variable "phoenix_secret_id" {
+  type     = string
+  default  = null
+  nullable = true
+}

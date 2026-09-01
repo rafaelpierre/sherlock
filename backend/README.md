@@ -190,6 +190,34 @@ user; AWS credentials remain outside the image.
 | `SHERLOCK_MCP_STDIO_ARGS` | local sibling MCP command | JSON array of command arguments |
 | `SHERLOCK_MCP_HTTP_HEADERS` | unset | JSON object of HTTP headers |
 | `SHERLOCK_MCP_STARTUP_TIMEOUT` | `30` | MCP initialization timeout in seconds |
+| `SHERLOCK_PHOENIX_SECRET_ID` | unset | AWS Secrets Manager ARN containing Phoenix OTLP credentials |
+
+## Phoenix OpenTelemetry tracing
+
+The backend emits one root `sherlock.chat.turn` span for every `POST /v1/chat`
+turn (including the complete SSE lifetime). Strands agent/model/tool spans and
+Sherlock's workflow spans inherit that trace context. User messages, prompts,
+raw SQL, tool arguments/results, transaction rows, credentials, and provider
+reasoning are never added by Sherlock; Strands sensitive GenAI attributes are
+redacted with `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=`.
+
+Production credentials are kept only in AWS Secrets Manager. After Terraform
+has created `sherlock-phoenix-otel`, add these GitHub Actions secrets and run
+the **Sync Phoenix OpenTelemetry secret** workflow once from `main`:
+
+- `PHOENIX_API_KEY`: the Phoenix API key;
+- `PHOENIX_ENDPOINT`: the complete HTTPS OTLP traces endpoint, ending in
+  `/v1/traces`.
+
+The workflow stores a JSON secret with those two keys. At startup the backend
+sets `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
+`OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <key>` from that secret, then
+uses the standard OTLP/HTTP exporter. The task definition supplies bounded
+batch processing (5 second delay, 512-span batches, 2,048-span queue), 10
+second export timeouts, parent-based sampling, and HTTP/protobuf. The Python
+OTLP exporter performs its built-in bounded exponential retry behaviour.
+Missing, malformed, or unreadable credentials disable exporting rather than
+changing any API response or preventing startup.
 
 For example, a custom local checkout can use:
 

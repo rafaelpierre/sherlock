@@ -34,6 +34,13 @@ data "aws_ecr_repository" "mcp" {
   name = "${var.project_name}-mcp"
 }
 
+# The value is intentionally populated only by the manually-dispatched GitHub
+# workflow. Terraform owns the secret container, never the Phoenix credentials.
+resource "aws_secretsmanager_secret" "phoenix_otel" {
+  name                    = "${var.project_name}-phoenix-otel"
+  recovery_window_in_days = 7
+}
+
 module "frontend" {
   source = "./modules/ecs_express"
 
@@ -64,6 +71,8 @@ module "backend" {
   minimum_task_count    = 1
   maximum_task_count    = 1
   agentcore_runtime_arn = module.agentcore.runtime_arn
+  runtime_secret_arns   = [aws_secretsmanager_secret.phoenix_otel.arn]
+  phoenix_secret_id     = aws_secretsmanager_secret.phoenix_otel.arn
 }
 
 module "agentcore" {
