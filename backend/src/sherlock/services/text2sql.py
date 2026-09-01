@@ -193,6 +193,7 @@ class Text2SQLService:
         self._start_callback = start_callback
         self._close_callback = close_callback
         self._start_lock = asyncio.Lock()
+        self._query_lock = asyncio.Lock()
         self._started = False
 
     async def start(self) -> None:
@@ -208,37 +209,46 @@ class Text2SQLService:
             self._started = True
 
     async def query(self, question: str) -> dict[str, Any]:
-        await self.start()
-        sql, cached_sql = await self._generator.generate(question)
-        sql = _require_bounded_sql(sql)
+        """Run one complete generate-and-execute transaction at a time.
 
-        for attempt in range(1, self._max_attempts + 1):
-            execution = await self._executor.execute(sql)
-            if execution.data is not None:
-                try:
-                    normalized_sql = _require_bounded_sql(execution.sql)
-                except SQLGenerationError:
-                    self._clear_generator_cache()
-                    raise
-                return asdict(
-                    Text2SQLResult(
-                        question=question,
-                        sql=normalized_sql,
-                        result=execution.data,
-                        attempts=attempt,
-                        cached_sql=cached_sql,
-                    )
-                )
+        The MCP client is shared by the application service and the analysis model
+        may request multiple evidence calls in one model turn. Serializing the full
+        transaction prevents one generator agent's lifecycle from racing another
+        query against the same client session.
+        """
 
-            error = execution.error or {}
-            error_type = error.get("type")
-            if error_type not in REPAIRABLE_ERRORS or attempt == self._max_attempts:
-                message = error.get("message", "The generated query could not run.")
-                raise QueryExecutionError(str(message))
-            sql = await self._generator.repair(question, sql, error)
+        async with self._query_lock:
+            await self.start()
+            sql, cached_sql = await self._generator.generate(question)
             sql = _require_bounded_sql(sql)
 
-        raise AssertionError("unreachable")
+            for attempt in range(1, self._max_attempts + 1):
+                execution = await self._executor.execute(sql)
+                if execution.data is not None:
+                    try:
+                        normalized_sql = _require_bounded_sql(execution.sql)
+                    except SQLGenerationError:
+                        self._clear_generator_cache()
+                        raise
+                    return asdict(
+                        Text2SQLResult(
+                            question=question,
+                            sql=normalized_sql,
+                            result=execution.data,
+                            attempts=attempt,
+                            cached_sql=cached_sql,
+                        )
+                    )
+
+                error = execution.error or {}
+                error_type = error.get("type")
+                if error_type not in REPAIRABLE_ERRORS or attempt == self._max_attempts:
+                    message = error.get("message", "The generated query could not run.")
+                    raise QueryExecutionError(str(message))
+                sql = await self._generator.repair(question, sql, error)
+                sql = _require_bounded_sql(sql)
+
+            raise AssertionError("unreachable")
 
     def close(self) -> None:
         self._clear_generator_cache()

@@ -61,6 +61,22 @@ class StubExecutor:
         return next(self.results)
 
 
+class ConcurrentProbeGenerator(FixedSQLGenerator):
+    def __init__(self) -> None:
+        super().__init__("SELECT 1")
+        self.active_generations = 0
+        self.max_active_generations = 0
+
+    async def generate(self, question: str) -> tuple[str, bool]:
+        self.active_generations += 1
+        self.max_active_generations = max(
+            self.max_active_generations, self.active_generations
+        )
+        await asyncio.sleep(0)
+        self.active_generations -= 1
+        return await super().generate(question)
+
+
 def successful_execution(sql: str = "SELECT 1") -> ExecutionResult:
     return ExecutionResult(
         sql=sql,
@@ -91,6 +107,23 @@ def test_successful_query_returns_structured_result() -> None:
     assert result["attempts"] == 1
     assert result["cached_sql"] is False
     assert result["result"]["rows"] == [[10]]
+
+
+def test_concurrent_queries_are_serialized_for_the_shared_mcp_client() -> None:
+    generator = ConcurrentProbeGenerator()
+    service = Text2SQLService(
+        generator, StubExecutor([successful_execution(), successful_execution()])
+    )
+
+    async def run_queries() -> None:
+        await asyncio.gather(
+            service.query("first analytical question"),
+            service.query("second analytical question"),
+        )
+
+    asyncio.run(run_queries())
+
+    assert generator.max_active_generations == 1
 
 
 @pytest.mark.parametrize("sql_length", [MAX_SQL_LENGTH - 1, MAX_SQL_LENGTH])
