@@ -147,6 +147,14 @@ class InvalidChatState(ValueError):
 
 @dataclass
 class _ChatExecution:
+    """Invocation-local authority for one chat turn.
+
+    Keeping mutable artifacts, selected intent, and working-state updates here
+    makes it impossible for the application-scoped service factories to become
+    an accidental server-side conversation store. Tool methods may update this
+    object, but only the terminal response publishes its replacement state.
+    """
+
     working_state: WorkingState
     artifacts: list[Artifact] = field(default_factory=list)
     intent: ChatIntent | None = None
@@ -164,6 +172,13 @@ class _ChatExecution:
     flush_buffered_text: Callable[[], None] | None = None
 
     def select(self, intent: ChatIntent) -> bool:
+        """Record the sole allowed top-level workflow for this turn.
+
+        This is enforced in code instead of trusting the coordinator prompt:
+        mixing rule mutation with a backtest or exploration would make the
+        browser's explicit state transition ambiguous.
+        """
+
         if self.intent is not None:
             self.routing_error = "The ChatAgent selected more than one workflow tool."
             return False
@@ -347,6 +362,14 @@ async def _consume_native_stream(
     has_selected_intent: Callable[[], bool],
     allows_text: Callable[[], bool],
 ) -> _NativeStreamResult:
+    """Translate provider streaming while preserving Sherlock's public order.
+
+    Provider text can arrive before tool selection. It is buffered as an
+    introduction until the first activity, then either emitted as content or
+    discarded when a specialist owns the final EXPLORE synthesis. This prevents
+    raw provider lifecycle details from defining the browser contract.
+    """
+
     result: Any | None = None
     streamed_text_units = 0
     emitted_text_units = 0
@@ -487,7 +510,13 @@ def _history_text(message: ConversationMessage) -> str:
 
 
 class ChatAgent:
-    """Fresh per-request agent with invocation-local tools and state."""
+    """Fresh per-request orchestrator with invocation-local tools and state.
+
+    The coordinator deliberately has five ordinary tools, each representing a
+    complete business workflow. `_ChatExecution.select` permits one call only;
+    specialist handoff, deterministic services, and typed artifacts therefore
+    remain explicit rather than becoming hidden model state.
+    """
 
     def __init__(
         self,

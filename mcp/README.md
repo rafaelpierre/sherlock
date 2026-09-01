@@ -1,193 +1,111 @@
-# Fraud Analytics MCP Server
+# Fraud Analytics MCP server
 
-A read-only Model Context Protocol server for analytical access to the local
-SQLite fraud dataset. It exposes a flattened `fraud_transactions` view designed
-for Text2SQL and serves MCP over Streamable HTTP for remote clients.
+This FastMCP service is Sherlock’s agentic data-capability boundary. It exposes
+only safe analytical tools over the supplied SQLite dataset; neither a Strands
+agent nor the FastAPI backend receives a direct SQLite connection. The [root
+README](../README.md) explains how this server fits the orchestrator, specialist
+handoff, and deployed AgentCore architecture.
 
-At startup, the server copies the prepared SQLite database into a shared
-in-memory database. Tool calls use connections to that snapshot, avoiding
-filesystem I/O; changes to the source file take effect after a server restart.
+At startup it copies the prepared database into a shared in-memory SQLite
+snapshot. Each request obtains a query-only connection to that snapshot, so
+tool calls avoid filesystem I/O and source changes take effect only after a
+restart.
 
-## Requirements
+## Setup and local use
 
-- Python 3.13+
-- [uv](https://docs.astral.sh/uv/)
-
-## Setup
-
-From this directory:
+Requirements: Python 3.13+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync
-```
-
-Prepare or refresh the canonical analytical view:
-
-```bash
+uv sync --locked --dev
 uv run python db/prepare_database.py
-```
-
-To prepare a different compatible SQLite database:
-
-```bash
-uv run python db/prepare_database.py --database /path/to/fraud.sqlite
-```
-
-Preparation is idempotent. It validates the canonical columns, one-row-per-
-transaction grain, unique transaction IDs, conversions, derived values, and
-fraud-label coverage. Missing labels remain `NULL` rather than becoming false.
-
-## Start the server
-
-```bash
 uv run fraud-mcp
 ```
 
-The defaults expose:
+Default addresses:
 
 ```text
-MCP endpoint: http://0.0.0.0:8000/mcp
-Health check: http://0.0.0.0:8000/health
+MCP endpoint: http://localhost:8000/mcp
+Health check: http://localhost:8000/health
 ```
 
-Use `localhost` or the machine's reachable hostname instead of `0.0.0.0` in a
-client URL.
-
-Example remote client configuration:
-
-```json
-{
-  "mcpServers": {
-    "fraud-analytics": {
-      "url": "http://fraud-mcp.internal:8000/mcp"
-    }
-  }
-}
-```
-
-The endpoint uses Streamable HTTP, not stdio or the legacy HTTP+SSE transport.
-
-For a local MCP client that owns the server subprocess, use the dedicated stdio
-entry point instead:
+The server binds to `0.0.0.0` by default, but clients must use `localhost` or a
+reachable hostname, not `0.0.0.0`. The HTTP transport is Streamable HTTP. For a
+client that owns the subprocess, use the separate stdio entry point:
 
 ```bash
 uv run fraud-mcp-stdio
 ```
 
-Protocol messages are written to stdout and server logs remain on stderr.
+Protocol data is stdout; logs remain stderr.
+
+## The available tools
+
+| Tool | Purpose | Bound |
+|---|---|---|
+| `get_schema` | Return relations, columns, types, and the recommended canonical relation. | Read-only metadata. |
+| `get_sample_values` | Return distinct values for one validated relation/column. | Maximum 50 values. |
+| `run_query` | Execute a validated analytical statement. | `SELECT`/`WITH` only, row ceiling and timeout. |
+| `get_database_info` | Return database metadata. | Read-only metadata. |
+
+The canonical `fraud_transactions` view is one row per transaction and flattens
+the provided `transactions`, `cards`, `users`, `mcc_codes`, and `fraud_labels`
+tables. It includes documented derived fields such as dollar-denominated values,
+time features, and amount-to-credit-limit ratio. Preparation validates the
+view’s grain, columns, conversions, and label coverage; missing fraud labels
+remain `NULL`.
+
+## Why this is an agentic safety boundary
+
+Tool calling is not trust. The backend limits which tools a caller can discover
+for a particular workflow; this server then independently validates request
+parameters and SQL. `run_query` accepts one `SELECT` or `WITH` statement,
+rejects writes, DDL, `PRAGMA`, `ATTACH`, extension loading, and multiple
+statements, and uses `PRAGMA query_only=ON` as defence in depth. Result rows are
+bounded and execution has a best-effort SQLite deadline. Structured errors for
+unknown columns/relations and timeout are returned to the backend’s controlled
+Text2SQL repair path, not silently masked.
+
+This is intentionally not a general-purpose data agent: there is no shell,
+filesystem API, write capability, or unbounded result export. Candidate-rule
+validation in the backend is an additional guard; it forbids `is_fraud` as a
+rule feature and validates a predicate again before backtesting.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `DATABASE_PATH` | `db/data/data.db` | Prepared SQLite database |
-| `MAX_QUERY_ROWS` | `100` | Maximum rows normally returned |
+| `DATABASE_PATH` | `db/data/data.db` | Prepared SQLite path |
+| `MAX_QUERY_ROWS` | `100` | Normal returned-row cap |
 | `HARD_MAX_QUERY_ROWS` | `1000` | Absolute configured row ceiling |
-| `QUERY_TIMEOUT_SECONDS` | `10` | Best-effort SQLite execution deadline |
+| `QUERY_TIMEOUT_SECONDS` | `10` | SQLite deadline |
 | `LOG_LEVEL` | `INFO` | Python logging level |
-| `MCP_HOST` | `0.0.0.0` | HTTP bind address |
-| `MCP_PORT` | `8000` | HTTP listen port |
-| `MCP_PATH` | `/mcp` | Streamable HTTP endpoint path |
+| `MCP_HOST` | `0.0.0.0` | HTTP bind host |
+| `MCP_PORT` | `8000` | HTTP port |
+| `MCP_PATH` | `/mcp` | Streamable HTTP path |
 
-For example:
-
-```bash
-DATABASE_PATH=/data/fraud.sqlite \
-MCP_PORT=9000 \
-QUERY_TIMEOUT_SECONDS=5 \
-uv run fraud-mcp
-```
-
-## MCP tools
-
-### `get_schema`
-
-Returns tables, views, columns, primary keys, and foreign keys. The response
-recommends `fraud_transactions`, whose grain is one row per transaction.
-
-### `get_sample_values`
-
-Returns distinct values for a validated relation and column:
-
-```json
-{
-  "relation": "fraud_transactions",
-  "column": "transaction_type",
-  "limit": 20
-}
-```
-
-The maximum limit is 50.
-
-### `run_query`
-
-Validates and runs one read-only analytical query:
-
-```json
-{
-  "sql": "SELECT card_type, AVG(is_fraud) AS fraud_rate FROM fraud_transactions GROUP BY card_type ORDER BY fraud_rate DESC"
-}
-```
-
-`SELECT`, `WITH`, joins, aggregates, analytical subqueries, and window functions
-are supported. DDL, DML, `PRAGMA`, `ATTACH`, multiple statements, and extension
-loading are rejected. The source file is opened with `mode=ro`, and runtime
-in-memory connections use `PRAGMA query_only=ON` as defense in depth.
-
-### `get_database_info`
-
-Returns transaction and label counts, date coverage, the canonical relation,
-and read-only status.
-
-## Analytical conventions
-
-- Monetary fields ending in `_usd_cents` preserve source integer values.
-- Corresponding `_usd` fields are expressed in dollars.
-- `is_fraud` is `1` for confirmed fraud, `0` for confirmed non-fraud, and
-  `NULL` for unlabelled transactions.
-- `transaction_day_of_week` follows SQLite: Sunday is `0`, Monday is `1`, and
-  Saturday is `6`.
-- Source anomalies are preserved. Preparation reports negative card or user age
-  rows rather than silently changing them.
-
-## Tests and checks
+To prepare another compatible dataset:
 
 ```bash
-uv run pytest
+uv run python db/prepare_database.py --database /path/to/fraud.sqlite
+```
+
+## Deployment and security
+
+In Docker Compose, MCP is loopback-published to the host and privately reached
+by the backend as `http://mcp:8000/mcp`. In the delivered AWS architecture, the
+same MCP protocol service runs in Amazon Bedrock AgentCore Runtime; the backend
+uses its ECS task role and SigV4 to invoke it. No static AWS credential is
+stored in the image.
+
+Standalone HTTP mode has no built-in authentication or TLS. Deploy it only on a
+trusted private network, or place it behind an authenticated TLS proxy or a
+supported FastMCP authentication provider.
+
+## Checks
+
+```bash
 uv run ruff check .
 uv run ruff format --check .
 uv run ty check
+uv run pytest --cov=fraud_mcp --cov=db --cov-report=term-missing --cov-fail-under=80
 ```
-
-Tests use temporary SQLite databases. They cover database preparation, SQL
-validation and execution, result limits, timeout interruption, structured
-errors, read-only behavior, and initialization/tool calls through Streamable
-HTTP.
-
-## Docker
-
-Build and run:
-
-```bash
-docker build -t fraud-analytics-mcp .
-docker run --rm -p 8000:8000 fraud-analytics-mcp
-```
-
-The image prepares the bundled database during the build and the runtime loads
-it into a read-only in-memory snapshot.
-
-The repository-level `docker-compose.yaml` builds this same image, waits for
-`GET /health`, and makes the MCP endpoint available to the backend at
-`http://mcp:8000/mcp`. Start the complete stack from the repository root with
-`docker compose up --build --wait`.
-
-## Network security
-
-The application does not enable authentication or TLS by default. Binding to
-`0.0.0.0` makes it reachable wherever the host firewall permits. Deploy it only
-on a trusted private network, or place it behind an authenticating TLS reverse
-proxy or a supported FastMCP authentication provider. Do not expose an
-unauthenticated instance to the public internet.
-
-Ensure a reverse proxy permits streaming HTTP responses and gives analytical
-requests at least `QUERY_TIMEOUT_SECONDS` plus normal network overhead.

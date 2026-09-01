@@ -135,7 +135,12 @@ def _create_strands_analysis_model(tools: list[Any]) -> AnalysisModel:
 
 
 class AnalysisAgent:
-    """Fresh specialist whose only data capability is the Text2SQL service."""
+    """Fresh bounded specialist whose only data capability is Text2SQLService.
+
+    The specialist can form the next question from completed evidence, but it
+    cannot access MCP or SQLite directly. Code-enforced limits bound cost and
+    latency even if a model attempts to continue investigating indefinitely.
+    """
 
     def __init__(
         self,

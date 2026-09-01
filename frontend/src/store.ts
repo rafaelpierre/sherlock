@@ -56,10 +56,17 @@ const storedPayloadSchema = z.discriminatedUnion("version", [
   storedInvestigationSchema,
 ]);
 
+/** Start a client-owned investigation; the UUID has no server-side session. */
 export function newInvestigation(): Investigation {
   return { conversationId: crypto.randomUUID(), messages: [], workingState: {} };
 }
 
+/**
+ * Restore only the deliberately small, versioned continuity record.
+ *
+ * Parsing/migration failure clears the payload rather than trying to recover
+ * stale rules or artifacts from arbitrary browser data.
+ */
 export function loadInvestigation(): Investigation {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -94,6 +101,12 @@ export function loadInvestigation(): Investigation {
   }
 }
 
+/**
+ * Persist safe continuity, never the evidence tables that rendered this turn.
+ *
+ * This keeps reload/retry useful without turning localStorage into an
+ * unbounded transaction-data cache. Persistence is intentionally best effort.
+ */
 export function saveInvestigation(investigation: Investigation): void {
   try {
     const payload = storedInvestigationSchema.parse({
