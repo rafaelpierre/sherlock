@@ -215,9 +215,23 @@ The service-specific GitHub workflows publish immutable multi-architecture
 images on a merge to `main`. **Deploy AWS PoC** selects validated image-release
 artifacts (or explicit service commit-SHA overrides), verifies their manifests,
 and applies Terraform. It does not rebuild, retag, or silently substitute an
-image during deployment. The workflow output `frontend_url` is the application
-URL. Run the **Sync Phoenix OpenTelemetry secret** workflow after setting the
-Phoenix GitHub secrets, so fresh backend tasks load exporter credentials.
+image during deployment. For an existing stack, it first updates the AgentCore
+runtime and makes a bounded, authenticated MCP call sequence (`initialize`,
+`get_schema`, and `get_database_info`) using the configured runtime ARN. The
+This check runs only in the manually dispatched deployment workflow, after
+Terraform initialization and validation but before the full Terraform apply
+that updates the backend revision. The workflow promotes the backend only
+after that smoke test passes; `/v1/health` is a supplementary browser-path
+check, not a release gate for the MCP path. The smoke test never runs SQL or
+retrieves transaction rows, and its logs omit tool payloads and results. If it
+fails, the workflow restores the runtime's previous immutable MCP image and
+leaves the current backend revision serving traffic. A first deployment has no
+prior browser revision to preserve, so it bootstraps the stack before applying
+the authenticated configuration; subsequent deployments use the staged MCP
+check before backend promotion. The workflow output `frontend_url` is the
+application URL. Run the **Sync Phoenix OpenTelemetry secret** workflow after
+setting the Phoenix GitHub secrets, so fresh backend tasks load exporter
+credentials.
 
 ## Evaluation mindset
 
