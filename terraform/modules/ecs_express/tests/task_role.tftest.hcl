@@ -36,6 +36,11 @@ run "backend_creates_agentcore_task_role" {
     condition     = length(aws_iam_role_policy.backend_task) == 1
     error_message = "An AgentCore-enabled service must attach its invocation policy."
   }
+
+  assert {
+    condition     = aws_iam_role_policy_attachment.infrastructure.policy_arn == "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices"
+    error_message = "An Express service infrastructure role must use the ECS service-role managed policy."
+  }
 }
 
 run "frontend_does_not_create_agentcore_task_role" {

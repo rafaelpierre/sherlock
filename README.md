@@ -249,6 +249,10 @@ account are intentionally fixed to this PoC account (`041391475835`) and region
 The initial deployment usually takes several minutes because ECS Express Mode
 creates its managed ingress resources and AgentCore creates a runtime revision.
 Use the workflow's Terraform output `frontend_url` to open the application.
+If a Terraform apply fails after creating resources, correct the configuration
+and rerun **Deploy AWS PoC**. Terraform records the resources it created in the
+remote state, so do not manually remove them or their state entries before the
+retry unless the failure specifically requires AWS cleanup.
 
 ### Run the application directly
 
