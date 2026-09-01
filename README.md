@@ -215,12 +215,17 @@ terraform -chdir=terraform/bootstrap apply \
 ```
 
 This creates the `sherlock-frontend`, `sherlock-backend`, and `sherlock-mcp` ECR
-repositories, the GitHub OIDC role, and the S3 state bucket. The repository's
-manual **Deploy AWS PoC** workflow builds multi-architecture images tagged with the commit
-SHA, pushes them to ECR, applies Terraform, and calls the public frontend
-`/health` and proxied `/v1/health` endpoints. Its state bucket and account are
-intentionally fixed to this PoC account (`041391475835`) and region
-(`eu-west-2`).
+repositories, the GitHub OIDC role, and the S3 state bucket. Each merge to
+`main` runs **Publish container images**, which pushes matching immutable,
+multi-architecture images to all three repositories under the merge commit SHA.
+Pull requests build-test the images but never write to ECR.
+
+To deploy, trigger **Deploy AWS PoC** manually and provide that published commit
+SHA as `image_tag`. The workflow first confirms that the tag exists in every
+repository; it then applies Terraform and calls the public frontend `/health`
+and proxied `/v1/health` endpoints. It never rebuilds, pushes, or retags an
+image. Its state bucket and account are intentionally fixed to this PoC account
+(`041391475835`) and region (`eu-west-2`).
 
 The initial deployment usually takes several minutes because ECS Express Mode
 creates its managed ingress resources and AgentCore creates a runtime revision.

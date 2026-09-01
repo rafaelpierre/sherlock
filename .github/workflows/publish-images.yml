@@ -1,0 +1,55 @@
+name: Publish container images
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "mcp/**"
+      - ".github/workflows/publish-images.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build container images
+        run: |
+          docker buildx build --platform linux/amd64 --load --tag sherlock-frontend:ci frontend
+          docker buildx build --platform linux/amd64 --load --tag sherlock-backend:ci backend
+          docker buildx build --platform linux/amd64 --load --tag sherlock-mcp:ci mcp
+
+  publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::041391475835:role/terraform-github
+          aws-region: eu-west-2
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Publish immutable multi-architecture images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          for service in frontend backend mcp; do
+            if aws ecr describe-images --repository-name "sherlock-$service" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+              echo "sherlock-$service:$IMAGE_TAG already exists; leaving immutable image unchanged"
+              continue
+            fi
+            docker buildx build --platform linux/amd64,linux/arm64 --push --tag "$REGISTRY/sherlock-$service:$IMAGE_TAG" "$service"
+          done
