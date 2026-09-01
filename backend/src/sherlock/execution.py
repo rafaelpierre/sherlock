@@ -101,7 +101,10 @@ class WorkflowLease(AbstractAsyncContextManager[None]):
             outcome = "deadline_exceeded"
             raise WorkflowDeadlineExceeded from timeout
         else:
-            outcome = "cancelled" if isinstance(exc, asyncio.CancelledError) else "ok"
+            if isinstance(exc, asyncio.CancelledError):
+                outcome = "cancelled"
+            elif exc is not None:
+                outcome = "failed"
         finally:
             if self._context_token is not None:
                 _active_workflow_lease.reset(self._context_token)
@@ -109,8 +112,10 @@ class WorkflowLease(AbstractAsyncContextManager[None]):
                 task for task in self._blocking_provider_tasks if not task.done()
             )
             if pending:
-                asyncio.create_task(
-                    self._release_after_provider_drain(pending, outcome)
+                self._controller.track_provider_drain(
+                    asyncio.create_task(
+                        self._release_after_provider_drain(pending, outcome)
+                    )
                 )
             else:
                 self._release(outcome)
@@ -160,6 +165,7 @@ class WorkflowController:
         self.limits = limits
         self._model = asyncio.Semaphore(limits.model_in_flight_limit)
         self._mcp = asyncio.Semaphore(limits.mcp_in_flight_limit)
+        self._provider_drains: set[asyncio.Task[None]] = set()
 
     async def admit(self, kind: WorkflowKind) -> WorkflowLease:
         permits = (self._mcp,)
@@ -181,6 +187,18 @@ class WorkflowController:
         lease = await self.admit(kind)
         async with lease:
             yield
+
+    def track_provider_drain(self, task: asyncio.Task[None]) -> None:
+        """Retain detached provider work until application shutdown can drain it."""
+
+        self._provider_drains.add(task)
+        task.add_done_callback(self._provider_drains.discard)
+
+    async def drain_provider_calls(self) -> None:
+        """Wait for detached provider work before closing its shared clients."""
+
+        while self._provider_drains:
+            await asyncio.gather(*tuple(self._provider_drains), return_exceptions=True)
 
     def _record(self, kind: WorkflowKind, outcome: str, started: float) -> None:
         # Do not add request content, SQL, rows, tool arguments, or provider data.

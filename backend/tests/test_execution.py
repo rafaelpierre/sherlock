@@ -96,7 +96,12 @@ def test_cancellation_keeps_permits_while_a_provider_thread_drains() -> None:
         with pytest.raises(WorkflowOverloaded):
             await controller.admit(WorkflowKind.QUERY)
 
+        drain = asyncio.create_task(controller.drain_provider_calls())
+        await asyncio.sleep(0)
+        assert not drain.done()
+
         release_provider.set()
+        await drain
         while True:
             try:
                 lease = await controller.admit(WorkflowKind.QUERY)
@@ -127,6 +132,21 @@ def test_safe_workflow_telemetry_has_no_request_content(
         asyncio.run(run())
 
     assert "kind=backtest outcome=ok elapsed_ms=" in caplog.text
+
+
+def test_exceptional_workflow_has_a_failed_telemetry_outcome(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def run() -> None:
+        controller = WorkflowController(ExecutionLimits())
+        with pytest.raises(RuntimeError, match="dependency failed"):
+            async with controller.workflow(WorkflowKind.BACKTEST):
+                raise RuntimeError("dependency failed")
+
+    with caplog.at_level(logging.INFO, logger="sherlock.execution"):
+        asyncio.run(run())
+
+    assert "kind=backtest outcome=failed elapsed_ms=" in caplog.text
 
 
 def test_query_timeout_has_a_safe_gateway_timeout_contract() -> None:

@@ -50,6 +50,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await application.state.workflow_controller.drain_provider_calls()
         backtest_service.close()
         rule_generation_service.close()
         text2sql_service.close()
