@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -55,9 +56,14 @@ def _phoenix_configuration(settings: Settings) -> tuple[str, str] | None:
     if not settings.phoenix_secret_id:
         return None
     try:
-        value = boto3.client("secretsmanager").get_secret_value(
-            SecretId=settings.phoenix_secret_id
-        )["SecretString"]
+        value = boto3.client(
+            "secretsmanager",
+            config=Config(
+                connect_timeout=1,
+                read_timeout=2,
+                retries={"max_attempts": 1, "mode": "standard"},
+            ),
+        ).get_secret_value(SecretId=settings.phoenix_secret_id)["SecretString"]
     except (BotoCoreError, ClientError, KeyError, TypeError):
         logger.warning("Phoenix tracing is disabled: runtime secret is unavailable")
         return None
@@ -89,6 +95,8 @@ def configure_tracing(settings: Settings) -> None:
 
     for name, value in _OTEL_DEFAULTS.items():
         os.environ.setdefault(name, value)
+    # Never permit an inherited opt-in to override the content-redaction policy.
+    os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = "gen_ai_unredacted_attributes="
 
     provider = TracerProvider(
         resource=Resource.create(
