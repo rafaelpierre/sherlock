@@ -48,4 +48,15 @@ variable "agentcore_runtime_arn" {
   type     = string
   default  = null
   nullable = true
+
+  validation {
+    condition     = !var.create_agentcore_task_role || var.agentcore_runtime_arn != null
+    error_message = "agentcore_runtime_arn must be provided when create_agentcore_task_role is true."
+  }
+}
+
+variable "create_agentcore_task_role" {
+  description = "Whether this service needs the AgentCore-enabled ECS task role. This must be known during planning."
+  type        = bool
+  default     = false
 }

@@ -1,0 +1,57 @@
+mock_provider "aws" {
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+}
+
+variables {
+  project_name       = "sherlock"
+  aws_region         = "eu-west-2"
+  service_name       = "sherlock-backend"
+  image_uri          = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/sherlock-backend:test"
+  container_port     = 8080
+  health_check_path  = "/v1/health"
+  cpu                = "512"
+  memory             = "1024"
+  minimum_task_count = 1
+  maximum_task_count = 1
+}
+
+run "backend_creates_agentcore_task_role" {
+  command = plan
+
+  variables {
+    create_agentcore_task_role = true
+    agentcore_runtime_arn      = "arn:aws:bedrock-agentcore:eu-west-2:123456789012:runtime/example"
+  }
+
+  assert {
+    condition     = length(aws_iam_role.task) == 1
+    error_message = "An AgentCore-enabled service must create an ECS task role."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.backend_task) == 1
+    error_message = "An AgentCore-enabled service must attach its invocation policy."
+  }
+}
+
+run "frontend_does_not_create_agentcore_task_role" {
+  command = plan
+
+  variables {
+    create_agentcore_task_role = false
+  }
+
+  assert {
+    condition     = length(aws_iam_role.task) == 0
+    error_message = "A frontend service must not create an AgentCore task role."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.backend_task) == 0
+    error_message = "A frontend service must not attach the backend invocation policy."
+  }
+}

@@ -53,17 +53,18 @@ module "frontend" {
 module "backend" {
   source = "./modules/ecs_express"
 
-  project_name          = var.project_name
-  aws_region            = var.aws_region
-  service_name          = "${var.project_name}-backend"
-  image_uri             = "${data.aws_ecr_repository.backend.repository_url}:${var.backend_image_tag}"
-  container_port        = 8080
-  health_check_path     = "/v1/health"
-  cpu                   = "512"
-  memory                = "1024"
-  minimum_task_count    = 1
-  maximum_task_count    = 1
-  agentcore_runtime_arn = module.agentcore.runtime_arn
+  project_name               = var.project_name
+  aws_region                 = var.aws_region
+  service_name               = "${var.project_name}-backend"
+  image_uri                  = "${data.aws_ecr_repository.backend.repository_url}:${var.backend_image_tag}"
+  container_port             = 8080
+  health_check_path          = "/v1/health"
+  cpu                        = "512"
+  memory                     = "1024"
+  minimum_task_count         = 1
+  maximum_task_count         = 1
+  create_agentcore_task_role = true
+  agentcore_runtime_arn      = module.agentcore.runtime_arn
 }
 
 module "agentcore" {
