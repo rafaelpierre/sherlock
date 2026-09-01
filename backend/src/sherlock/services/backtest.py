@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+import httpx
+
 from sherlock.config import Settings
 from sherlock.services.rule_validation import (
     MCPSchemaProvider,
@@ -87,7 +89,10 @@ class BacktestService:
         self._started = True
 
     async def backtest(self, rule: str) -> dict[str, Any]:
-        await self.start()
+        try:
+            await self.start()
+        except* (httpx.HTTPError, OSError) as exc:
+            raise BacktestError("The MCP service is unavailable.") from exc
         try:
             validation = await self._validator.validate(rule)
         except (QueryExecutionError, RuleSchemaError) as exc:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from builtins import ExceptionGroup
 
+import httpx
 import pytest
 
 from sherlock.services.backtest import (
@@ -177,6 +179,45 @@ def test_unrelated_runtime_error_is_not_normalized() -> None:
     service = BacktestService(
         FailingValidator(RuntimeError("programming defect")),
         StubExecutor(aggregate_result()),
+    )
+
+    with pytest.raises(RuntimeError, match="programming defect"):
+        asyncio.run(service.backtest("amount_usd > 1"))
+
+
+@pytest.mark.parametrize(
+    "startup_error",
+    [
+        httpx.ConnectError("connection refused"),
+        ExceptionGroup(
+            "MCP startup failed", [httpx.ConnectError("connection refused")]
+        ),
+    ],
+)
+def test_known_mcp_startup_errors_are_normalized(
+    startup_error: BaseException,
+) -> None:
+    async def start() -> None:
+        raise startup_error
+
+    service = BacktestService(
+        StubValidator(),
+        StubExecutor(aggregate_result()),
+        start_callback=start,
+    )
+
+    with pytest.raises(BacktestError, match="MCP service is unavailable"):
+        asyncio.run(service.backtest("amount_usd > 1"))
+
+
+def test_unrelated_mcp_startup_error_is_not_normalized() -> None:
+    async def start() -> None:
+        raise RuntimeError("programming defect")
+
+    service = BacktestService(
+        StubValidator(),
+        StubExecutor(aggregate_result()),
+        start_callback=start,
     )
 
     with pytest.raises(RuntimeError, match="programming defect"):
