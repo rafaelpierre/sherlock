@@ -32,6 +32,9 @@ from the process-local cache. Generated and returned SQL is limited to 20,000
 characters so every successful query can be retained as bounded
 `working_state.last_sql` in a later chat request. Model output above that limit
 is rejected before MCP execution and `/v1/query` returns a controlled `502`.
+For direct rule refinement, an invalid current rule returns its validation
+details as `422`; a schema or query dependency failure returns the retryable
+`502` payload `{"detail": "..."}`.
 
 ## Use the conversational API
 
