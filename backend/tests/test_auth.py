@@ -110,3 +110,26 @@ async def test_verifier_rejects_invalid_access_token_claims(
         )
 
     assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_verifier_throttles_refreshes_for_unknown_key_ids(
+    verifier: CognitoTokenVerifier,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refreshes = 0
+
+    async def refresh_keys() -> None:
+        nonlocal refreshes
+        refreshes += 1
+
+    monkeypatch.setattr(verifier, "_refresh_keys", refresh_keys)
+
+    with pytest.raises(HTTPException):
+        await verifier._key("unknown-key-one")
+    with pytest.raises(HTTPException):
+        await verifier._key("unknown-key-two")
+    with pytest.raises(HTTPException):
+        await verifier._key("unknown-key-one")
+
+    assert refreshes == 1

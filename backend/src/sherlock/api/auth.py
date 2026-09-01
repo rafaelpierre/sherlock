@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, NoReturn, cast
 
@@ -16,14 +17,23 @@ class CognitoTokenVerifier:
     """Verify access tokens using the configured Cognito issuer's JWKS."""
 
     def __init__(
-        self, issuer: str, client_id: str, *, jwks_ttl_seconds: int = 3600
+        self,
+        issuer: str,
+        client_id: str,
+        *,
+        jwks_ttl_seconds: int = 3600,
+        unknown_key_ttl_seconds: int = 60,
     ) -> None:
         self._issuer = issuer
         self._client_id = client_id
         self._jwks_url = f"{issuer}/.well-known/jwks.json"
         self._jwks_ttl_seconds = jwks_ttl_seconds
+        self._unknown_key_ttl_seconds = unknown_key_ttl_seconds
         self._keys: dict[str, dict[str, Any]] = {}
+        self._unknown_keys: dict[str, float] = {}
         self._keys_expires_at = 0.0
+        self._last_unknown_key_refresh_at = 0.0
+        self._refresh_lock = asyncio.Lock()
 
     async def verify_authorization(self, authorization: str | None) -> dict[str, Any]:
         """Return verified claims or raise a deliberately non-specific 401."""
@@ -58,12 +68,29 @@ class CognitoTokenVerifier:
         return claims
 
     async def _key(self, key_id: str) -> dict[str, Any]:
-        if time.monotonic() >= self._keys_expires_at or key_id not in self._keys:
-            await self._refresh_keys()
+        now = time.monotonic()
         key = self._keys.get(key_id)
-        if key is None:
-            self._reject()
-        assert key is not None
+        if key is not None and now < self._keys_expires_at:
+            return key
+
+        async with self._refresh_lock:
+            now = time.monotonic()
+            key = self._keys.get(key_id)
+            if key is not None and now < self._keys_expires_at:
+                return key
+            if self._unknown_keys.get(key_id, 0.0) > now:
+                self._reject()
+            if (
+                now >= self._keys_expires_at
+                or now - self._last_unknown_key_refresh_at
+                >= self._unknown_key_ttl_seconds
+            ):
+                await self._refresh_keys()
+                self._last_unknown_key_refresh_at = now
+            key = self._keys.get(key_id)
+            if key is None:
+                self._unknown_keys[key_id] = now + self._unknown_key_ttl_seconds
+                self._reject()
         return key
 
     async def _refresh_keys(self) -> None:
@@ -79,6 +106,7 @@ class CognitoTokenVerifier:
             for key in keys
             if isinstance(key, dict) and isinstance(key.get("kid"), str)
         }
+        self._unknown_keys.clear()
         self._keys_expires_at = time.monotonic() + self._jwks_ttl_seconds
 
     @staticmethod

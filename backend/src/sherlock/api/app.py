@@ -27,7 +27,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     settings = Settings.from_environment()
     application.state.auth_verifier = (
         CognitoTokenVerifier(settings.cognito_issuer, settings.cognito_client_id)
-        if settings.cognito_issuer and settings.cognito_client_id
+        if settings.auth_required
+        and settings.cognito_issuer
+        and settings.cognito_client_id
         else None
     )
     configure_tracing(settings)
