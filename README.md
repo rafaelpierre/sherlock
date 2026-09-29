@@ -1,4 +1,4 @@
-# Sherlock — Agentic AI Assistant for Fraud Managers
+# Sherlock: Agentic AI Assistant for Fraud Managers
 
 Sherlock is a demo of an agentic AI assistant for Fraud Managers. It turns an
 investigative question into evidence, a candidate SQL predicate, and a historical
