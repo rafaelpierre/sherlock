@@ -31,6 +31,13 @@ access, validation, metrics, and the authoritative rule/state representation.
 Docker Compose v2, AWS credentials/region, and Bedrock model access are
 required for a live analytical turn.
 
+Supply a compatible SQLite dataset at `mcp/db/data/data.db` before building
+the stack. Database files in that directory are ignored by Git and are not
+included in new checkouts. Keep an existing local copy or obtain one from the
+project maintainer. The MCP image build prepares and validates this database;
+it does not download or generate the source data. See the
+[MCP setup guide](mcp/README.md#setup-and-local-use) for direct local use.
+
 First authenticate your AWS CLI session:
 
 ```bash

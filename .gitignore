@@ -11,6 +11,14 @@ frontend/coverage/
 eval-results/
 specs
 
+# Local runtime datasets and SQLite sidecar files (supplied separately).
+/mcp/db/data/*.db
+/mcp/db/data/*.db-*
+/mcp/db/data/*.sqlite
+/mcp/db/data/*.sqlite-*
+/mcp/db/data/*.sqlite3
+/mcp/db/data/*.sqlite3-*
+
 .terraform
 .terraform.lock.hcl
 terraform.tfstate

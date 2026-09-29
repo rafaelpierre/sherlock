@@ -15,6 +15,14 @@ restart.
 
 Requirements: Python 3.13+ and [uv](https://docs.astral.sh/uv/).
 
+From this directory, place a compatible SQLite dataset at `db/data/data.db`
+(create `db/data/` if needed). Dataset files are ignored by Git and supplied
+separately: keep your existing local copy or obtain one from the project
+maintainer. The preparation command below creates the canonical view over an
+existing database; it does not download or generate the source tables. Docker
+image builds, including Compose and CI image builds, also require the database
+at this path in the build context before the build starts.
+
 ```bash
 uv sync --locked --dev
 uv run python db/prepare_database.py
