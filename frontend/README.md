@@ -1,10 +1,11 @@
 # Sherlock frontend
 
-The frontend is a Vite, React, and TypeScript investigation workspace. Its job
-is to make an FSM’s evidence, candidate rules, and historical metrics legible
-without treating assistant prose as authoritative data. The backend remains
-stateless; this client owns bounded conversation context and explicit working
-state. See the [root README](../README.md) for the agentic and cloud architecture.
+The frontend is a Vite, React, and TypeScript investigation workspace for
+Sherlock's agentic AI demo. Its job is to make a Fraud Manager’s evidence,
+candidate rules, and historical metrics legible without treating assistant prose
+as authoritative data. The backend remains stateless; this client owns bounded
+conversation context and explicit working state. See the [root README](../README.md)
+for the agentic and cloud architecture.
 
 ## Run locally
 

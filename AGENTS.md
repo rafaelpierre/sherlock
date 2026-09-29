@@ -6,7 +6,7 @@ exists below the files being changed.
 
 ## Project Summary
 
-Sherlock is a decision-support application for fraud success managers. It turns
+Sherlock is a demo of an agentic AI assistant for Fraud Managers. It turns
 natural-language questions into analytics, helps create candidate fraud rules,
 validates them, and replays them against historical transactions. Candidate
 rules are hypotheses for investigation; they are not production fraud

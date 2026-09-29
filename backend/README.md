@@ -1,9 +1,10 @@
 # Sherlock backend
 
-The backend is a Python 3.13 FastAPI application that coordinates the FSM
-investigation workflow. It uses Strands Agents and Amazon Bedrock for language
-tasks, but it never opens SQLite directly: all schema inspection and query
-execution cross the MCP boundary. See the [root architecture guide](../README.md)
+The backend is a Python 3.13 FastAPI application that coordinates the Fraud
+Manager investigation workflow for Sherlock's agentic AI demo. It uses Strands
+Agents and Amazon Bedrock for language tasks, but it never opens SQLite directly:
+all schema inspection and query execution cross the MCP boundary. See the
+[root architecture guide](../README.md)
 for the end-to-end design.
 
 ## Responsibilities and boundaries
@@ -64,7 +65,7 @@ and must not disable authentication; do not commit tokens or client secrets.
 |---|---|
 | `GET /v1/health` | Process readiness only. |
 | `POST /v1/query` | Direct Text2SQL request; returns normalized SQL, a bounded table, repair count, and cache status. |
-| `POST /v1/chat` | Orchestrated FSM turn; returns JSON, or SSE when `Accept: text/event-stream` is requested. |
+| `POST /v1/chat` | Orchestrated Fraud Manager turn; returns JSON, or SSE when `Accept: text/event-stream` is requested. |
 | `POST /v1/rules/generate` | Generate then validate a candidate rule. |
 | `POST /v1/rules/refine` | Refine an explicit rule; invalid current rule is `422`. |
 | `POST /v1/rules/backtest` | Validate and replay an explicit candidate rule against historical data. |

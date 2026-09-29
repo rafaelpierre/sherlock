@@ -1,18 +1,18 @@
-# Sherlock — Fraud Success Manager Assistant
+# Sherlock — Agentic AI Assistant for Fraud Managers
 
-Sherlock is a delivered interview assignment prototype for a Fraud Success
-Manager (FSM). It turns an investigative question into evidence, a candidate
-SQL predicate, and a historical backtest. It is decision support: it does not
-deploy rules or make live payment decisions.
+Sherlock is a demo of an agentic AI assistant for Fraud Managers. It turns an
+investigative question into evidence, a candidate SQL predicate, and a historical
+backtest. It is decision support: it does not deploy rules or make live payment
+decisions.
 
-> A candidate rule is a reviewable hypothesis. An FSM must assess its logic,
-> false-positive cost, coverage, operational fit, and production suitability.
+> A candidate rule is a reviewable hypothesis. A Fraud Manager must assess its
+> logic, false-positive cost, coverage, operational fit, and production suitability.
 
-## The assignment outcome
+## What the demo does
 
-The brief asks how GenAI can help an FSM explore transaction data, find a
-pattern, and express it as a deployable SQL `WHERE` clause. Sherlock implements
-the full investigative loop:
+Sherlock helps Fraud Managers explore transaction data, find patterns, and
+express them as candidate SQL `WHERE` predicates. The demo supports the full
+investigative loop:
 
 1. Explore the dataset in natural language.
 2. Review schema-grounded SQL and bounded evidence.
@@ -262,10 +262,10 @@ and pilot outcomes.
 - The provided source is normalised, so Sherlock prepares a one-row-per-
   transaction `fraud_transactions` analytics view with derived fields. This
   makes analysis reliable but means source-schema changes need a view refresh.
-- The brief's rule example contains a subquery. For this assignment, rules are
-  deliberately restricted to flat predicates over the canonical view. The loss
-  of expressiveness buys deterministic validation, portability, and clearer
-  human review; a production rule compiler could support reviewed joins.
+- Candidate rules are deliberately restricted to flat predicates over the
+  canonical view. The loss of expressiveness buys deterministic validation,
+  portability, and clearer human review; a production rule compiler could
+  support reviewed joins.
 - Labels are incomplete. Excluding unlabelled rows from quality metrics avoids
   falsely declaring them legitimate, while including them in alert volume keeps
   operational impact visible.
@@ -275,7 +275,6 @@ and pilot outcomes.
 - Future work: 20–30 semantic Text2SQL cases and live baselines, transaction
   level backtest drill-down, authentication/authorisation, private networking,
   retention policy, fairness/segment analysis, and rule-engine integration.
-- It would also be straightforward to create an agentic improvement flywheel:
-  use an LLM as a judge and/or connect telemetry to coding assistants through
-  the Arize Phoenix MCP server. That work was intentionally not prioritised for
-  this assignment.
+- Future evaluation work could use an LLM as a judge or connect telemetry to
+  coding assistants through the Arize Phoenix MCP server. These capabilities
+  are outside the current demo's scope.
