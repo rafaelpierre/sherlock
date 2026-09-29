@@ -1,0 +1,9 @@
+flowchart LR
+    accTitle: Phoenix telemetry flow
+    accDescr: A FastAPI chat request creates a root chat span with orchestrator, analysis, agent, model, and tool child spans. An OTLP HTTP batch exporter sends traces to Arize Phoenix, configured from endpoint and API-key secrets in AWS Secrets Manager.
+    API[FastAPI chat request] --> Root[sherlock.chat.turn]
+    Root --> Workflow[orchestrator / analysis spans]
+    Workflow --> GenAI[Strands agent, model, tool spans]
+    Root --> Exporter[OTLP HTTP batch exporter]
+    Exporter --> Phoenix[Arize Phoenix]
+    Secret[AWS Secrets Manager<br/>endpoint + API key] --> Exporter

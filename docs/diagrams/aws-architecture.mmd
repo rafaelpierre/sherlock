@@ -1,0 +1,9 @@
+flowchart LR
+    accTitle: Delivered AWS architecture
+    accDescr: A browser reaches the React frontend in ECS Express Mode, which proxies API requests to a FastAPI and Bedrock backend in ECS Express Mode. The backend invokes the MCP runtime in Amazon Bedrock AgentCore, reads SQLite data, exports telemetry to Phoenix, and obtains secrets from AWS Secrets Manager.
+    User[Browser] --> FE[ECS Express frontend<br/>React + Nginx]
+    FE -->|/v1 proxy| BE[ECS Express backend<br/>FastAPI + Bedrock]
+    BE -->|SigV4 MCP invocation| MCP[Amazon Bedrock AgentCore<br/>MCP Runtime]
+    MCP --> Data[(SQLite snapshot)]
+    BE --> Phoenix[Arize Phoenix]
+    Secrets[AWS Secrets Manager] --> BE

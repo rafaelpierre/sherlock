@@ -1,0 +1,184 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ArtifactView } from "./Artifacts";
+
+describe("artifact rendering", () => {
+  it("keeps an analysis question, SQL, and table visibly grouped", async () => {
+    const user = userEvent.setup();
+    render(
+      <ArtifactView
+        artifact={{
+          type: "analysis_step",
+          step: 2,
+          question: "Validate the Debit concentration by amount",
+          sql: "SELECT card_type, AVG(amount_usd) FROM fraud_transactions",
+          table: {
+            columns: ["card_type", "average_amount"],
+            rows: [["Debit", 125]],
+            row_count: 1,
+            truncated: false,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Analysis step 2")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Validate the Debit/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "▦ Result" }));
+    expect(screen.getByRole("cell", { name: "Debit" })).toBeInTheDocument();
+    await user.click(screen.getByText("View generated SQL"));
+    expect(screen.getByText(/SELECT card_type/)).toBeVisible();
+  });
+
+  it("falls back to a result table without numeric values", () => {
+    render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["name", "state"],
+          rows: [["Acme", null]],
+          row_count: 1,
+          truncated: true,
+        }}
+      />,
+    );
+    expect(screen.queryByRole("tab", { name: /Chart/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "—" })).toBeInTheDocument();
+    expect(screen.getByRole("table").parentElement).not.toHaveClass("chart-sized-result");
+    expect(screen.getByText("1 rows · limited")).toBeInTheDocument();
+  });
+
+  it("renders invalid candidate errors and suggestions", () => {
+    render(
+      <ArtifactView
+        artifact={{
+          type: "candidate_rule",
+          rule: null,
+          valid: false,
+          repair_count: 2,
+          errors: [{ code: "unsafe", message: "Unsafe field.", suggestion: "Use amount instead." }],
+        }}
+      />,
+    );
+    expect(screen.getByText("Fraud hypothesis")).toBeInTheDocument();
+    expect(screen.getByText("Unsafe field. Use amount instead.")).toBeInTheDocument();
+  });
+
+  it("switches back from the table to the chart", async () => {
+    const user = userEvent.setup();
+    render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["name", "count"],
+          rows: [["A", 3]],
+          row_count: 1,
+          truncated: false,
+        }}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "▦ Result" }));
+    await user.click(screen.getByRole("tab", { name: "▥ Chart" }));
+    expect(screen.getByLabelText("Chart of count")).toBeInTheDocument();
+  });
+
+  it("keeps a chart-backed result table at the chart panel height", async () => {
+    const user = userEvent.setup();
+    render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["name", "count"],
+          rows: [
+            ["A", 3],
+            ["B", 2],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "▦ Result" }));
+
+    expect(screen.getByRole("table").parentElement).toHaveClass("chart-sized-result");
+  });
+
+  it("does not chart signed values as positive bars", () => {
+    render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["name", "delta"],
+          rows: [
+            ["A", 3],
+            ["B", -2],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+    expect(screen.queryByRole("tab", { name: /Chart/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "-2" })).toBeInTheDocument();
+  });
+
+  it("scales fractional series against their actual maximum", () => {
+    const { container } = render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["card_type", "fraud_rate"],
+          rows: [
+            ["Debit", 0.0031],
+            ["Credit", 0.00155],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+    const bars = container.querySelectorAll<HTMLElement>(".bar");
+    expect(bars[0]).toHaveStyle({ height: "100%" });
+    expect(bars[1]).toHaveStyle({ height: "50%" });
+  });
+
+  it("preserves small fractional values in chart labels", () => {
+    render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["card_type", "fraud_rate"],
+          rows: [
+            ["Debit", 0.0004],
+            ["Credit", 0.0002],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+    expect(screen.getByText("0.0004", { selector: ".bar-value" })).toBeInTheDocument();
+    expect(screen.getByText("0.0002", { selector: ".bar-value" })).toBeInTheDocument();
+  });
+
+  it("renders an all-zero series with zero-height bars", () => {
+    const { container } = render(
+      <ArtifactView
+        artifact={{
+          type: "table",
+          columns: ["card_type", "fraud_rate"],
+          rows: [
+            ["Debit", 0],
+            ["Credit", 0],
+          ],
+          row_count: 2,
+          truncated: false,
+        }}
+      />,
+    );
+    for (const bar of container.querySelectorAll<HTMLElement>(".bar")) {
+      expect(bar).toHaveStyle({ height: "0%" });
+    }
+  });
+});
